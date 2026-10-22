@@ -28,12 +28,11 @@ jobs:
           
       - name: Install Dependencies
         run: flutter pub get
-        
-      # Kita hapus script sed yang rumit, ganti dengan patch file langsung
+
+      # Perbaikan Manifest untuk Izin VPN
       - name: Patch AndroidManifest for VPN
         run: |
           FILE="android/app/src/main/AndroidManifest.xml"
-          # Ganti isi manifest dengan yang sudah ditambah izin VPN
           cat << 'MANIFEST' > $FILE
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.xailla.xaillaclass">
@@ -41,9 +40,10 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
               <application
-                  android:label="xaillaclass"
+                  android:label="Xailla Class"
                   android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher">
+                  android:icon="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="true">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -80,5 +80,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Xailla-VPN-APK
+          name: Xailla-Elegant-VPN
           path: build/app/outputs/flutter-apk/app-release.apk
