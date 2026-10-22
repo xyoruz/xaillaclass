@@ -28,15 +28,51 @@ jobs:
           
       - name: Install Dependencies
         run: flutter pub get
-
-      # MENAMBAHKAN IZIN VPN & SERVICE KE ANDROIDMANIFEST.XML
-      - name: Inject VPN Permissions
+        
+      # Kita hapus script sed yang rumit, ganti dengan patch file langsung
+      - name: Patch AndroidManifest for VPN
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          # Tambah izin internet dan VPN
-          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>' $MANIFEST
-          # Tambah service V2Ray (Wajib untuk VPN)
-          sed -i '/<\/application>/i \        <service android:name="com.github.xiaokang.flutter_v2ray.V2rayVpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">\n            <intent-filter>\n                <action android:name="android.net.VpnService"/>\n            </intent-filter>\n        </service>' $MANIFEST
+          FILE="android/app/src/main/AndroidManifest.xml"
+          # Ganti isi manifest dengan yang sudah ditambah izin VPN
+          cat << 'MANIFEST' > $FILE
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.xailla.xaillaclass">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <application
+                  android:label="xaillaclass"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:taskAffinity=""
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"
+                        />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+                  <service android:name="com.github.xiaokang.flutter_v2ray.V2rayVpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.net.VpnService"/>
+                      </intent-filter>
+                  </service>
+              </application>
+          </manifest>
+          MANIFEST
           
       - name: Build APK (ARM64)
         run: flutter build apk --release --target-platform android-arm64
