@@ -55,8 +55,6 @@ class ConfigParser {
         .join('&');
   }
 
-  /// Ubah teks YAML gaya Clash menjadi link (trojan/vless/vmess).
-  /// Link atau JSON dikembalikan apa adanya.
   static String toLink(String raw) {
     final t = raw.trim();
     if (!isYaml(t)) return t;
@@ -257,7 +255,6 @@ class _MainNavigatorState extends State<MainNavigator> {
     }
   }
 
-  // Izin yang diminta saat aplikasi pertama kali dibuka.
   Future<void> _askPermissions(SharedPreferences prefs) async {
     if (!mounted) return;
     await showDialog<void>(
@@ -629,175 +626,179 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    const purple = Color(0xFF800060);
+    // === LOGIKA BARU: JIKA VPN OFF, TAMPILKAN CONFIG EDITOR ===
+    if (!isConnected) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Config Editor'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.lock_outline, color: Colors.grey),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Hubungkan VPN (Home) terlebih dahulu untuk membuka daftar profil.')),
+                );
+              },
+            ),
+          ],
+        ),
+        body: const ConfigEditorScreen(
+          initial: '',
+        ),
+      );
+    }
 
+    // === LOGIKA ASLI (JIKA VPN ON): TAMPILKAN DAFTAR PROXY ===
     return Scaffold(
       appBar: AppBar(
         title: const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          if (isConnected)
-            IconButton(
-              icon: const Icon(Icons.speed),
-              tooltip: 'Tes ping',
-              onPressed: onRefreshPing,
-            ),
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: 'Tambah profil',
             onPressed: () => _openEditor(context),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: isConnected ? Colors.green : purple,
-        foregroundColor: Colors.white,
-        onPressed: onToggle,
-        child: isBusy
-            ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white))
-            : const Icon(Icons.bolt),
-      ),
       body: configs.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Belum ada profil.\nKlik + untuk menambah.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ),
-            )
-          : GridView.builder(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                mainAxisExtent: 76,
-              ),
+          ? const Center(child: Text('Belum ada profil. Tekan + untuk menambah.'))
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
               itemCount: configs.length,
               itemBuilder: (context, index) {
-                final info = ConfigParser.describe(configs[index]);
-                final selected = index == selectedIndex;
-                final textColor = selected ? Colors.white : (isDark ? Colors.white : Colors.black87);
+                final desc = ConfigParser.describe(configs[index]);
+                final isSelected = index == selectedIndex;
                 final ping = pings[index];
 
-                Widget pingWidget = const SizedBox.shrink();
-                if (isConnected) {
-                  if (ping == null) {
-                    pingWidget = SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: textColor),
-                    );
-                  } else if (ping < 0) {
-                    pingWidget = Text('timeout', style: TextStyle(color: textColor, fontSize: 12));
-                  } else {
-                    pingWidget = Text('$ping', style: TextStyle(color: textColor, fontSize: 18));
-                  }
-                }
-
-                return Material(
-                  color: selected ? purple : (isDark ? Colors.grey.shade900 : Colors.white),
-                  borderRadius: BorderRadius.circular(10),
-                  elevation: selected ? 0 : 1,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => onSelect(index),
-                    onLongPress: () => _showMenu(context, index),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(info.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 16)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  info.type.isEmpty ? '' : info.type[0].toUpperCase() + info.type.substring(1),
-                                  style: TextStyle(color: textColor, fontSize: 16),
-                                ),
-                              ],
-                            ),
-                          ),
-                          pingWidget,
-                        ],
+                return Card(
+                  elevation: 0,
+                  color: isSelected ? Theme.of(context).colorScheme.primaryContainer : (Theme.of(context).brightness == Brightness.dark ? Colors.grey.shade900 : Colors.grey.shade100),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    leading: Icon(
+                      desc.type == 'vmess' ? Icons.cloud : Icons.security,
+                      color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey,
+                    ),
+                    title: Text(
+                      desc.name,
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
+                    subtitle: Text(desc.type.toUpperCase()),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (ping != null)
+                          Text(
+                            ping == -1 ? 'Timeout' : '$ping ms',
+                            style: TextStyle(
+                              color: ping == -1 ? Colors.red : Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        if (isSelected)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8.0),
+                            child: Icon(Icons.check_circle, color: Colors.green, size: 20),
+                          ),
+                      ],
+                    ),
+                    onTap: () => onSelect(index),
+                    onLongPress: () => _showMenu(context, index),
                   ),
                 );
               },
             ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        onPressed: () => _openEditor(context),
+        child: const Icon(Icons.bolt, color: Colors.white),
+      ),
     );
   }
 }
 
-// ======================= CONFIG EDITOR =======================
+// ======================= CONFIG EDITOR (DIKUNCI SAAT VPN OFF) =======================
 
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
-  const ConfigEditorScreen({super.key, this.initial = ''});
+  const ConfigEditorScreen({super.key, required this.initial});
 
   @override
   State<ConfigEditorScreen> createState() => _ConfigEditorScreenState();
 }
 
 class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
-  late final TextEditingController _controller = TextEditingController(text: widget.initial);
+  late TextEditingController _controller;
 
-  static const String _trojanTpl = '''- name: Trojan WS
-  server: example.com
-  port: 443
-  type: trojan
-  password: password-anda
-  skip-cert-verify: true
-  sni: example.com
-  network: ws
-  ws-opts:
-    path: /trojan
-    headers:
-      Host: example.com
-  udp: true''';
-
-  static const String _vlessTpl = '''- name: VLESS WS
-  server: example.com
-  port: 443
-  type: vless
-  uuid: 00000000-0000-0000-0000-000000000000
-  tls: true
-  skip-cert-verify: true
-  servername: example.com
-  network: ws
-  ws-opts:
-    path: /vless
-    headers:
-      Host: example.com
-  udp: true''';
-
-  static const String _vmessTpl = '''- name: VMess WS
-  server: example.com
-  port: 443
-  type: vmess
-  uuid: 00000000-0000-0000-0000-000000000000
-  alterId: 0
-  cipher: auto
-  tls: true
-  skip-cert-verify: true
-  servername: example.com
-  network: ws
-  ws-opts:
-    path: /vmess
-    headers:
-      Host: example.com
-  udp: true''';
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initial);
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: TextField(
+        controller: _controller,
+        maxLines: null,
+        expands: true,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: const InputDecoration(
+          border: OutlineInputBorder(),
+          hintText: 'Tempelkan link (vmess://, trojan://, dll) atau format YAML (server:, type:) di sini...',
+        ),
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+      ),
+    );
+  }
+}
+
+// ======================= SETTINGS =======================
+
+class SettingsScreen extends StatelessWidget {
+  final Function(ThemeMode) onThemeChanged;
+  const SettingsScreen({super.key, required this.onThemeChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        children: [
+          const ListTile(
+            title: Text('Tema Aplikasi'),
+            subtitle: Text('Ubah mode terang / gelap'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.brightness_auto),
+            title: const Text('Ikuti Sistem'),
+            onTap: () => onThemeChanged(ThemeMode.system),
+          ),
+          ListTile(
+            leading: const Icon(Icons.light_mode),
+            title: const Text('Terang'),
+            onTap: () => onThemeChanged(ThemeMode.light),
+          ),
+          ListTile(
+            leading: const Icon(Icons.dark_mode),
+            title: const Text('Gelap'),
+            onTap: () => onThemeChanged(ThemeMode.dark),
+          ),
+        ],
+      ),
+    );
+  }
+}se();
     super.dispose();
   }
 
