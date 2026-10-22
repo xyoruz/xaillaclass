@@ -132,6 +132,89 @@ class ConfigParser {
     }
   }
 
+  static String toYaml(String raw) {
+    final t = raw.trim();
+    if (isYaml(t)) return t;
+
+    try {
+      if (t.startsWith('vmess://')) {
+        final body = t.substring(8);
+        final m = jsonDecode(utf8.decode(base64.decode(base64.normalize(body))));
+        final name = m['ps'] ?? 'VMess';
+        final server = m['add'] ?? '';
+        final port = m['port'] ?? '443';
+        final uuid = m['id'] ?? '';
+        final net = m['net'] ?? 'tcp';
+        final tls = (m['tls'] ?? '').toString().isNotEmpty;
+        final path = m['path'] ?? '/';
+        final host = m['host'] ?? '';
+
+        return '''name: $name
+server: $server
+port: $port
+type: vmess
+uuid: $uuid
+tls: ${tls ? 'true' : 'false'}
+network: $net
+ws-opts:
+  path: $path
+  headers:
+    Host: $host''';
+      }
+
+      final uri = Uri.parse(t);
+      if (uri.scheme == 'trojan') {
+        final pass = uri.userInfo;
+        final server = uri.host;
+        final port = uri.port.toString();
+        final name = uri.fragment.isNotEmpty ? Uri.decodeComponent(uri.fragment) : 'Trojan';
+        final sni = uri.queryParameters['sni'] ?? server;
+        final net = uri.queryParameters['type'] ?? 'tcp';
+        final path = uri.queryParameters['path'] ?? '/';
+        final host = uri.queryParameters['host'] ?? sni;
+
+        return '''name: $name
+server: $server
+port: $port
+type: trojan
+password: $pass
+skip-cert-verify: true
+sni: $sni
+network: $net
+ws-opts:
+  path: $path
+  headers:
+    Host: $host''';
+      }
+
+      if (uri.scheme == 'vless') {
+        final uuid = uri.userInfo;
+        final server = uri.host;
+        final port = uri.port.toString();
+        final name = uri.fragment.isNotEmpty ? Uri.decodeComponent(uri.fragment) : 'VLESS';
+        final sni = uri.queryParameters['sni'] ?? server;
+        final tls = (uri.queryParameters['security'] ?? 'none') == 'tls';
+        final net = uri.queryParameters['type'] ?? 'tcp';
+        final path = uri.queryParameters['path'] ?? '/';
+        final host = uri.queryParameters['host'] ?? sni;
+
+        return '''name: $name
+server: $server
+port: $port
+type: vless
+uuid: $uuid
+tls: ${tls ? 'true' : 'false'}
+sni: $sni
+network: $net
+ws-opts:
+  path: $path
+  headers:
+    Host: $host''';
+      }
+    } catch (e) {}
+    return t;
+  }
+
   static ProfileInfo describe(String raw) {
     final t = raw.trim();
     try {
@@ -173,7 +256,7 @@ class XaillaApp extends StatefulWidget {
 }
 
 class _XaillaAppState extends State<XaillaApp> {
-  ThemeMode _themeMode = ThemeMode.dark;
+  ThemeMode _themeMode = ThemeMode.light;
 
   void _changeTheme(ThemeMode mode) => setState(() => _themeMode = mode);
 
@@ -185,6 +268,7 @@ class _XaillaAppState extends State<XaillaApp> {
       themeMode: _themeMode,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7B1FA2), brightness: Brightness.light),
+        scaffoldBackgroundColor: Colors.white,
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
@@ -197,12 +281,11 @@ class _XaillaAppState extends State<XaillaApp> {
   }
 }
 
-// ======================= NAVIGATOR + KONTROLER VPN =======================
+// ======================= NAVIGATOR =======================
 
 class MainNavigator extends StatefulWidget {
   final Function(ThemeMode) onThemeChanged;
   const MainNavigator({super.key, required this.onThemeChanged});
-
   @override
   State<MainNavigator> createState() => _MainNavigatorState();
 }
@@ -280,9 +363,7 @@ class _MainNavigatorState extends State<MainNavigator> {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _saveConfigs() async {
@@ -337,7 +418,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       return;
     }
     if (savedConfigs.isEmpty) {
-      _snack('Tambah profil dulu di menu Profiles.');
+      _snack('Tambah profil dulu di menu Edit Config.');
       return;
     }
     setState(() => isBusy = true);
@@ -345,11 +426,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       final idx = selectedIndex.clamp(0, savedConfigs.length - 1);
       final p = ConfigParser.prepare(savedConfigs[idx]);
       if (await _v2ray.requestPermission()) {
-        _v2ray.startV2Ray(
-          remark: p.remark,
-          config: p.config,
-          proxyOnly: false,
-        );
+        _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
       } else {
         _snack('Izin VPN ditolak.');
       }
@@ -365,9 +442,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       if (!mounted || !isConnected) return;
       try {
         final p = ConfigParser.prepare(savedConfigs[i]);
-        final d = await _v2ray
-            .getServerDelay(config: p.config)
-            .timeout(const Duration(seconds: 8));
+        final d = await _v2ray.getServerDelay(config: p.config).timeout(const Duration(seconds: 8));
         if (!mounted || !isConnected) return;
         setState(() => pings[i] = d);
       } catch (_) {
@@ -378,10 +453,6 @@ class _MainNavigatorState extends State<MainNavigator> {
 
   @override
   Widget build(BuildContext context) {
-    final profileName = savedConfigs.isEmpty
-        ? 'Belum ada profil dipilih'
-        : ConfigParser.describe(savedConfigs[selectedIndex]).name;
-
     final screens = [
       HomeScreen(
         isConnected: isConnected,
@@ -389,8 +460,9 @@ class _MainNavigatorState extends State<MainNavigator> {
         duration: duration,
         downSpeed: downSpeed,
         upSpeed: upSpeed,
-        profileName: profileName,
         onToggle: _toggleConnection,
+        onOpenConfig: () => setState(() => _currentIndex = 1),
+        onOpenSettings: () => setState(() => _currentIndex = 2),
       ),
       ProfileScreen(
         configs: savedConfigs,
@@ -417,8 +489,8 @@ class _MainNavigatorState extends State<MainNavigator> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) => setState(() => _currentIndex = index),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.shield_outlined), selectedIcon: Icon(Icons.shield), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: 'Profiles'),
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.list_alt), label: 'Config'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
@@ -426,7 +498,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 }
 
-// ======================= HOME =======================
+// ======================= HOME SCREEN (DESAIN BARU) =======================
 
 class HomeScreen extends StatelessWidget {
   final bool isConnected;
@@ -434,8 +506,9 @@ class HomeScreen extends StatelessWidget {
   final String duration;
   final int downSpeed;
   final int upSpeed;
-  final String profileName;
   final VoidCallback onToggle;
+  final VoidCallback onOpenConfig;
+  final VoidCallback onOpenSettings;
 
   const HomeScreen({
     super.key,
@@ -444,8 +517,9 @@ class HomeScreen extends StatelessWidget {
     required this.duration,
     required this.downSpeed,
     required this.upSpeed,
-    required this.profileName,
     required this.onToggle,
+    required this.onOpenConfig,
+    required this.onOpenSettings,
   });
 
   String _speed(int bytes) => (bytes / 1024).toStringAsFixed(2);
@@ -453,146 +527,272 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark ? Colors.grey.shade900 : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black87;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('XAILLA CLASS', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            GestureDetector(
-              onTap: onToggle,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 400),
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: isConnected
-                      ? const LinearGradient(colors: [Colors.greenAccent, Colors.green], begin: Alignment.topLeft, end: Alignment.bottomRight)
-                      : LinearGradient(colors: [Colors.grey.shade800, Colors.grey.shade900], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isConnected ? Colors.green.withOpacity(0.5) : Colors.transparent,
-                      blurRadius: 40,
-                      spreadRadius: 10,
-                    )
-                  ],
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // LOGO & JUDUL (XAILLA CLASS)
+              Row(
+                children: [
+                  // LOGO APLIKASI (Ikon Elegan dengan Background)
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF9C27B0), Color(0xFF673AB7)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.purple.withOpacity(0.3),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        )
+                      ],
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.shield, color: Colors.white, size: 32),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Text(
+                    'XAILLA CLASS',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                      color: textColor,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 30),
+
+              // KARTU STATUS BESAR (STOPPED / CONNECTED)
+              GestureDetector(
+                onTap: onToggle,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+                  decoration: BoxDecoration(
+                    color: isConnected 
+                        ? Colors.green.shade600 
+                        : (isDark ? Colors.grey.shade800 : Colors.grey.shade400),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isConnected ? Colors.green : Colors.grey).withOpacity(0.3),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8),
+                      )
+                    ],
+                  ),
+                  child: Row(
                     children: [
-                      isBusy
-                          ? const SizedBox(width: 60, height: 60, child: CircularProgressIndicator(strokeWidth: 4))
-                          : Icon(Icons.power_settings_new, size: 80, color: isConnected ? Colors.white : Colors.grey.shade500),
-                      const SizedBox(height: 10),
-                      Text(
-                        isConnected ? 'CONNECTED' : 'DISCONNECTED',
-                        style: TextStyle(color: isConnected ? Colors.white : Colors.grey.shade500, fontWeight: FontWeight.bold, fontSize: 16),
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: isBusy 
+                            ? const Padding(
+                                padding: EdgeInsets.all(12.0),
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : Icon(
+                                isConnected ? Icons.shield : Icons.block,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                      ),
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isConnected ? 'Connected' : 'Stopped',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              isConnected ? '$duration • ↓${_speed(downSpeed)} KB/s ↑${_speed(upSpeed)} KB/s' : 'Tap to start',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 50),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _statCard(Icons.arrow_downward, _speed(downSpeed), 'KB/s', Colors.blue),
-                _statCard(Icons.arrow_upward, _speed(upSpeed), 'KB/s', Colors.orange),
-                _statCard(Icons.timer, isConnected ? duration : '00:00:00', 'Durasi', Colors.purple),
-              ],
-            ),
-            const SizedBox(height: 40),
-            Card(
-              elevation: 0,
-              color: isDark ? Colors.grey.shade900 : Colors.grey.shade200,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    const Icon(Icons.dns, color: Colors.purple),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Text(
-                        profileName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 20),
+
+              // MENU EDIT CONFIG
+              _menuCard(
+                context: context,
+                icon: Icons.edit_document,
+                iconColor: Colors.black87,
+                title: 'Edit Config',
+                subtitle: 'Edit your config here',
+                onTap: onOpenConfig,
+                cardColor: cardColor,
+                textColor: textColor,
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+
+              // MENU SETTINGS
+              _menuCard(
+                context: context,
+                icon: Icons.settings,
+                iconColor: Colors.black87,
+                title: 'Settings',
+                subtitle: 'App preferences',
+                onTap: onOpenSettings,
+                cardColor: isDark ? Colors.grey.shade900 : Colors.transparent,
+                textColor: textColor,
+                isTransparent: true,
+              ),
+              const SizedBox(height: 12),
+
+              // MENU ABOUT
+              _menuCard(
+                context: context,
+                icon: Icons.info_outline,
+                iconColor: Colors.black87,
+                title: 'About',
+                subtitle: 'Version & information',
+                onTap: () {
+                  showAboutDialog(
+                    context: context,
+                    applicationName: 'Xailla Class',
+                    applicationVersion: 'v2.0.0',
+                    applicationIcon: const Icon(Icons.shield, size: 40, color: Colors.purple),
+                    children: [
+                      const Text('Aplikasi VPN ringan dan elegan untuk kebutuhan koneksi Anda.'),
+                      const SizedBox(height: 10),
+                      Text('Created with ❤️', style: TextStyle(color: Colors.grey.shade600)),
+                    ],
+                  );
+                },
+                cardColor: isDark ? Colors.grey.shade900 : Colors.transparent,
+                textColor: textColor,
+                isTransparent: true,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _statCard(IconData icon, String value, String label, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 28),
-        const SizedBox(height: 8),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
+  Widget _menuCard({
+    required BuildContext context,
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    required Color cardColor,
+    required Color textColor,
+    bool isTransparent = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isTransparent ? Colors.transparent : cardColor,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: isTransparent ? [] : [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            )
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 28),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: textColor,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400),
+          ],
+        ),
+      ),
     );
   }
 }
 
-// ======================= PROFIL (DAFTAR PROXY + PING) =======================
+// ======================= PROFIL SCREEN (MONITORING) =======================
 
 class ProfileScreen extends StatelessWidget {
   final List<String> configs;
   final int selectedIndex;
-  final bool isConnected;
-  final bool isBusy;
+  final bool isConnected, isBusy;
   final Map<int, int> pings;
   final void Function(int) onSelect;
-  final VoidCallback onToggle;
-  final VoidCallback onRefreshPing;
+  final VoidCallback onToggle, onRefreshPing;
   final void Function(String) onAdd;
   final void Function(int, String) onEdit;
   final void Function(int) onDelete;
 
   const ProfileScreen({
-    super.key,
-    required this.configs,
-    required this.selectedIndex,
-    required this.isConnected,
-    required this.isBusy,
-    required this.pings,
-    required this.onSelect,
-    required this.onToggle,
-    required this.onRefreshPing,
-    required this.onAdd,
-    required this.onEdit,
-    required this.onDelete,
+    super.key, required this.configs, required this.selectedIndex,
+    required this.isConnected, required this.isBusy, required this.pings,
+    required this.onSelect, required this.onToggle, required this.onRefreshPing,
+    required this.onAdd, required this.onEdit, required this.onDelete,
   });
 
   Future<void> _openEditor(BuildContext context, {int? index}) async {
     final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (_) => ConfigEditorScreen(initial: index == null ? '' : configs[index]),
-      ),
+      MaterialPageRoute(builder: (_) => ConfigEditorScreen(initial: index == null ? '' : configs[index])),
     );
     if (result == null) return;
-    if (index == null) {
-      onAdd(result);
-    } else {
-      onEdit(index, result);
-    }
+    if (index == null) { onAdd(result); } else { onEdit(index, result); }
   }
 
   void _showMenu(BuildContext context, int index) {
@@ -602,22 +802,8 @@ class ProfileScreen extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Edit'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _openEditor(context, index: index);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Hapus'),
-              onTap: () {
-                Navigator.pop(ctx);
-                onDelete(index);
-              },
-            ),
+            ListTile(leading: const Icon(Icons.edit), title: const Text('Edit'), onTap: () { Navigator.pop(ctx); _openEditor(context, index: index); }),
+            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Hapus'), onTap: () { Navigator.pop(ctx); onDelete(index); }),
           ],
         ),
       ),
@@ -626,91 +812,125 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // === LOGIKA BARU: JIKA VPN OFF, TAMPILKAN CONFIG EDITOR ===
     if (!isConnected) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Config Editor'),
+          title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold)),
           actions: [
             IconButton(
               icon: const Icon(Icons.lock_outline, color: Colors.grey),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Hubungkan VPN (Home) terlebih dahulu untuk membuka daftar profil.')),
-                );
-              },
+              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hubungkan VPN terlebih dahulu untuk membuka daftar profil.'))),
             ),
           ],
         ),
-        // Menampilkan Editor (Read-only karena tidak ada aksi simpan)
         body: const ConfigEditorScreen(initial: '', isReadOnly: true),
       );
     }
 
-    // === LOGIKA ASLI (JIKA VPN ON): TAMPILKAN DAFTAR PROXY ===
     return Scaffold(
       appBar: AppBar(
         title: const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => _openEditor(context),
+          IconButton(icon: const Icon(Icons.add), onPressed: () => _openEditor(context)),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('@KENTANG_INJECTOR', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _tabButton('Select', true),
+                      _tabButton('Best Ping', false),
+                      _tabButton('Fallback', false),
+                      _tabButton('Load Balance', false),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(),
+          Expanded(
+            child: configs.isEmpty
+                ? const Center(child: Text('Belum ada profil. Tekan + untuk menambah.'))
+                : ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: configs.length,
+                    itemBuilder: (context, index) {
+                      final desc = ConfigParser.describe(configs[index]);
+                      final isSelected = index == selectedIndex;
+                      final ping = pings[index];
+
+                      return Card(
+                        elevation: 0,
+                        color: isSelected ? Colors.purple.shade900 : (Theme.of(context).brightness == Brightness.dark ? Colors.grey.shade900 : Colors.grey.shade100),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: Icon(
+                            desc.type == 'vmess' ? Icons.cloud : Icons.security,
+                            color: isSelected ? Colors.white : Colors.purple,
+                          ),
+                          title: Text(
+                            desc.name,
+                            style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? Colors.white : null),
+                          ),
+                          subtitle: Text(
+                            desc.type.toUpperCase(),
+                            style: TextStyle(color: isSelected ? Colors.white70 : Colors.grey),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (ping != null)
+                                Text(
+                                  ping == -1 ? 'Timeout' : '$ping',
+                                  style: TextStyle(
+                                    color: ping == -1 ? Colors.red : (isSelected ? Colors.white : Colors.green),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              if (isSelected)
+                                const Padding(padding: EdgeInsets.only(left: 8.0), child: Icon(Icons.check_circle, color: Colors.white, size: 20)),
+                            ],
+                          ),
+                          onTap: () => onSelect(index),
+                          onLongPress: () => _showMenu(context, index),
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
-      body: configs.isEmpty
-          ? const Center(child: Text('Belum ada profil. Tekan + untuk menambah.'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: configs.length,
-              itemBuilder: (context, index) {
-                final desc = ConfigParser.describe(configs[index]);
-                final isSelected = index == selectedIndex;
-                final ping = pings[index];
-
-                return Card(
-                  elevation: 0,
-                  color: isSelected ? Theme.of(context).colorScheme.primaryContainer : (Theme.of(context).brightness == Brightness.dark ? Colors.grey.shade900 : Colors.grey.shade100),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: ListTile(
-                    leading: Icon(
-                      desc.type == 'vmess' ? Icons.cloud : Icons.security,
-                      color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey,
-                    ),
-                    title: Text(
-                      desc.name,
-                      style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
-                    ),
-                    subtitle: Text(desc.type.toUpperCase()),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (ping != null)
-                          Text(
-                            ping == -1 ? 'Timeout' : '$ping ms',
-                            style: TextStyle(
-                              color: ping == -1 ? Colors.red : Colors.green,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        if (isSelected)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8.0),
-                            child: Icon(Icons.check_circle, color: Colors.green, size: 20),
-                          ),
-                      ],
-                    ),
-                    onTap: () => onSelect(index),
-                    onLongPress: () => _showMenu(context, index),
-                  ),
-                );
-              },
-            ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Colors.purple.shade900,
         onPressed: () => _openEditor(context),
         child: const Icon(Icons.bolt, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _tabButton(String text, bool isActive) {
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: isActive ? Colors.purple.shade900 : Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+        border: isActive ? null : Border.all(color: Colors.grey.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: isActive ? FontWeight.bold : FontWeight.normal),
       ),
     );
   }
@@ -721,12 +941,7 @@ class ProfileScreen extends StatelessWidget {
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
   final bool isReadOnly;
-  
-  const ConfigEditorScreen({
-    super.key, 
-    required this.initial,
-    this.isReadOnly = false,
-  });
+  const ConfigEditorScreen({super.key, required this.initial, this.isReadOnly = false});
 
   @override
   State<ConfigEditorScreen> createState() => _ConfigEditorScreenState();
@@ -735,14 +950,11 @@ class ConfigEditorScreen extends StatefulWidget {
 class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
   late TextEditingController _controller;
 
-  static const String _trojanTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: trojan\npassword: passkamu\nsni: domain.com\nnetwork: ws\nws-opts:\n  path: /trojan\n  headers:\n    Host: domain.com';
-  static const String _vlessTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: vless\nuuid: isi-uuid-kamu\ntls: true\nsni: domain.com\nnetwork: ws\nws-opts:\n  path: /vless\n  headers:\n    Host: domain.com';
-  static const String _vmessTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: vmess\nuuid: isi-uuid-kamu\ntls: true\nnetwork: ws\nws-opts:\n  path: /vmess\n  headers:\n    Host: domain.com';
-
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initial);
+    final yamlInit = ConfigParser.toYaml(widget.initial);
+    _controller = TextEditingController(text: yamlInit);
   }
 
   @override
@@ -751,49 +963,53 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
     super.dispose();
   }
 
-  void _insertTemplate(String tpl) {
-    if (widget.isReadOnly) return;
-    final current = _controller.text.trim();
-    setState(() {
-      _controller.text = current.isEmpty ? tpl : '$current\n\n$tpl';
-    });
-  }
-
-  void _showTemplateDialog() {
-    if (widget.isReadOnly) return;
+  void _showAddMenu() {
     showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.security),
-              title: const Text('Template Trojan'),
-              onTap: () { Navigator.pop(ctx); _insertTemplate(_trojanTpl); },
-            ),
-            ListTile(
-              leading: const Icon(Icons.shield),
-              title: const Text('Template VLESS'),
-              onTap: () { Navigator.pop(ctx); _insertTemplate(_vlessTpl); },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud),
-              title: const Text('Template VMess'),
-              onTap: () { Navigator.pop(ctx); _insertTemplate(_vmessTpl); },
-            ),
-          ],
-        ),
-      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        final urlController = TextEditingController();
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 16, right: 16, top: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Tambah Config / Paste URL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: 'Paste link vmess://, trojan://, dll...',
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  final raw = urlController.text.trim();
+                  if (raw.isNotEmpty) {
+                    final yamlText = ConfigParser.toYaml(raw);
+                    setState(() {
+                      _controller.text = yamlText;
+                    });
+                  }
+                  Navigator.pop(ctx);
+                },
+                child: const Text('Isi Otomatis ke Editor'),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        );
+      },
     );
   }
 
   void _save() {
     final text = _controller.text.trim();
     if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Config tidak boleh kosong')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config tidak boleh kosong')));
       return;
     }
     Navigator.pop(context, text);
@@ -806,16 +1022,9 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
         title: const Text('Config Editor'),
         actions: [
           if (!widget.isReadOnly)
-            IconButton(
-              icon: const Icon(Icons.library_add),
-              tooltip: 'Template',
-              onPressed: _showTemplateDialog,
-            ),
+            IconButton(icon: const Icon(Icons.add), tooltip: 'Paste URL', onPressed: _showAddMenu),
           if (!widget.isReadOnly)
-            IconButton(
-              icon: const Icon(Icons.save),
-              onPressed: _save,
-            ),
+            IconButton(icon: const Icon(Icons.save), onPressed: _save),
         ],
       ),
       body: Padding(
@@ -829,9 +1038,9 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
           style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
           decoration: InputDecoration(
             border: const OutlineInputBorder(),
-            hintText: widget.isReadOnly 
+            hintText: widget.isReadOnly
                 ? 'Hubungkan VPN terlebih dahulu untuk mengedit'
-                : 'Tempelkan link (vmess://, trojan://, dll) atau format YAML (server:, type:) di sini...',
+                : 'Ketik manual YAML di sini, atau tekan tombol + di atas untuk paste link otomatis...',
             filled: widget.isReadOnly,
             fillColor: widget.isReadOnly ? Colors.grey.withOpacity(0.1) : null,
           ),
@@ -853,25 +1062,10 @@ class SettingsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          const ListTile(
-            title: Text('Tema Aplikasi'),
-            subtitle: Text('Ubah mode terang / gelap'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.brightness_auto),
-            title: const Text('Ikuti Sistem'),
-            onTap: () => onThemeChanged(ThemeMode.system),
-          ),
-          ListTile(
-            leading: const Icon(Icons.light_mode),
-            title: const Text('Terang'),
-            onTap: () => onThemeChanged(ThemeMode.light),
-          ),
-          ListTile(
-            leading: const Icon(Icons.dark_mode),
-            title: const Text('Gelap'),
-            onTap: () => onThemeChanged(ThemeMode.dark),
-          ),
+          const ListTile(title: Text('Tema Aplikasi'), subtitle: Text('Ubah mode terang / gelap')),
+          ListTile(leading: const Icon(Icons.brightness_auto), title: const Text('Ikuti Sistem'), onTap: () => onThemeChanged(ThemeMode.system)),
+          ListTile(leading: const Icon(Icons.light_mode), title: const Text('Terang'), onTap: () => onThemeChanged(ThemeMode.light)),
+          ListTile(leading: const Icon(Icons.dark_mode), title: const Text('Gelap'), onTap: () => onThemeChanged(ThemeMode.dark)),
         ],
       ),
     );
