@@ -281,7 +281,7 @@ class _XaillaAppState extends State<XaillaApp> {
   }
 }
 
-// ======================= NAVIGATOR =======================
+// ======================= MAIN NAVIGATOR =======================
 
 class MainNavigator extends StatefulWidget {
   final Function(ThemeMode) onThemeChanged;
@@ -291,7 +291,6 @@ class MainNavigator extends StatefulWidget {
 }
 
 class _MainNavigatorState extends State<MainNavigator> {
-  int _currentIndex = 0;
   List<String> savedConfigs = [];
   int selectedIndex = 0;
 
@@ -333,32 +332,12 @@ class _MainNavigatorState extends State<MainNavigator> {
       selectedIndex = prefs.getInt('selected_index') ?? 0;
       if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
     });
+    
+    // Minta izin notifikasi pertama kali
     if (!(prefs.getBool('perm_asked') ?? false)) {
-      await _askPermissions(prefs);
+      await Permission.notification.request();
+      await prefs.setBool('perm_asked', true);
     }
-  }
-
-  Future<void> _askPermissions(SharedPreferences prefs) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Izin Aplikasi'),
-        content: const Text(
-          'Xailla Class membutuhkan izin berikut agar berjalan penuh:\n\n'
-          '• VPN: untuk membuat koneksi VPN\n'
-          '• Notifikasi: untuk status koneksi saat berjalan di latar belakang\n\n'
-          'Tekan Izinkan, lalu setujui permintaan Android berikutnya.',
-        ),
-        actions: [
-          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Izinkan')),
-        ],
-      ),
-    );
-    await Permission.notification.request();
-    await _v2ray.requestPermission();
-    await prefs.setBool('perm_asked', true);
   }
 
   void _snack(String msg) {
@@ -425,6 +404,8 @@ class _MainNavigatorState extends State<MainNavigator> {
     try {
       final idx = selectedIndex.clamp(0, savedConfigs.length - 1);
       final p = ConfigParser.prepare(savedConfigs[idx]);
+      
+      // Minta izin VPN saat Start
       if (await _v2ray.requestPermission()) {
         _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
       } else {
@@ -451,54 +432,74 @@ class _MainNavigatorState extends State<MainNavigator> {
     }
   }
 
+  // FUNGSI NAVIGASI
+  void _goToConfig() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProfileScreen(
+          configs: savedConfigs,
+          selectedIndex: selectedIndex,
+          isConnected: isConnected,
+          isBusy: isBusy,
+          pings: pings,
+          onSelect: _select,
+          onToggle: _toggleConnection,
+          onRefreshPing: () {
+            setState(() => pings = {});
+            _measurePings();
+          },
+          onAdd: _addConfig,
+          onEdit: _editConfig,
+          onDelete: _deleteConfig,
+        ),
+      ),
+    );
+  }
+
+  void _goToSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SettingsScreen(onThemeChanged: widget.onThemeChanged),
+      ),
+    );
+  }
+
+  void _goToAbout() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'Xailla Class',
+      applicationVersion: 'v2.0.0',
+      applicationIcon: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset('assets/logo.jpg', width: 40, height: 40, fit: BoxFit.cover),
+      ),
+      children: [
+        const Text('Aplikasi VPN ringan dan elegan untuk kebutuhan koneksi Anda.'),
+        const SizedBox(height: 10),
+        Text('Created with ❤️', style: TextStyle(color: Colors.grey.shade600)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screens = [
-      HomeScreen(
-        isConnected: isConnected,
-        isBusy: isBusy,
-        duration: duration,
-        downSpeed: downSpeed,
-        upSpeed: upSpeed,
-        onToggle: _toggleConnection,
-        onOpenConfig: () => setState(() => _currentIndex = 1),
-        onOpenSettings: () => setState(() => _currentIndex = 2),
-      ),
-      ProfileScreen(
-        configs: savedConfigs,
-        selectedIndex: selectedIndex,
-        isConnected: isConnected,
-        isBusy: isBusy,
-        pings: pings,
-        onSelect: _select,
-        onToggle: _toggleConnection,
-        onRefreshPing: () {
-          setState(() => pings = {});
-          _measurePings();
-        },
-        onAdd: _addConfig,
-        onEdit: _editConfig,
-        onDelete: _deleteConfig,
-      ),
-      SettingsScreen(onThemeChanged: widget.onThemeChanged),
-    ];
-
-    return Scaffold(
-      body: screens[_currentIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) => setState(() => _currentIndex = index),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: 'Config'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
-        ],
-      ),
+    return HomeScreen(
+      isConnected: isConnected,
+      isBusy: isBusy,
+      duration: duration,
+      downSpeed: downSpeed,
+      upSpeed: upSpeed,
+      onToggle: _toggleConnection,
+      onOpenConfig: _goToConfig,
+      onOpenSettings: _goToSettings,
+      onOpenAbout: _goToAbout,
     );
   }
 }
 
-// ======================= HOME SCREEN (DESAIN BARU) =======================
+// ======================= HOME SCREEN =======================
 
 class HomeScreen extends StatelessWidget {
   final bool isConnected;
@@ -509,6 +510,7 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback onOpenConfig;
   final VoidCallback onOpenSettings;
+  final VoidCallback onOpenAbout;
 
   const HomeScreen({
     super.key,
@@ -520,6 +522,7 @@ class HomeScreen extends StatelessWidget {
     required this.onToggle,
     required this.onOpenConfig,
     required this.onOpenSettings,
+    required this.onOpenAbout,
   });
 
   String _speed(int bytes) => (bytes / 1024).toStringAsFixed(2);
@@ -537,30 +540,28 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // LOGO & JUDUL (XAILLA CLASS)
+              // LOGO & JUDUL
               Row(
                 children: [
-                  // LOGO APLIKASI (Ikon Elegan dengan Background)
                   Container(
                     width: 54,
                     height: 54,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF9C27B0), Color(0xFF673AB7)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
                       borderRadius: BorderRadius.circular(14),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.purple.withOpacity(0.3),
-                          blurRadius: 10,
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 8,
                           offset: const Offset(0, 4),
                         )
                       ],
                     ),
-                    child: const Center(
-                      child: Icon(Icons.shield, color: Colors.white, size: 32),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.asset(
+                        'assets/logo.jpg',
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -577,7 +578,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 30),
 
-              // KARTU STATUS BESAR (STOPPED / CONNECTED)
+              // KARTU STATUS BESAR
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
@@ -651,7 +652,7 @@ class HomeScreen extends StatelessWidget {
               _menuCard(
                 context: context,
                 icon: Icons.edit_document,
-                iconColor: Colors.black87,
+                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'Edit Config',
                 subtitle: 'Edit your config here',
                 onTap: onOpenConfig,
@@ -664,7 +665,7 @@ class HomeScreen extends StatelessWidget {
               _menuCard(
                 context: context,
                 icon: Icons.settings,
-                iconColor: Colors.black87,
+                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'Settings',
                 subtitle: 'App preferences',
                 onTap: onOpenSettings,
@@ -678,22 +679,10 @@ class HomeScreen extends StatelessWidget {
               _menuCard(
                 context: context,
                 icon: Icons.info_outline,
-                iconColor: Colors.black87,
+                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'About',
                 subtitle: 'Version & information',
-                onTap: () {
-                  showAboutDialog(
-                    context: context,
-                    applicationName: 'Xailla Class',
-                    applicationVersion: 'v2.0.0',
-                    applicationIcon: const Icon(Icons.shield, size: 40, color: Colors.purple),
-                    children: [
-                      const Text('Aplikasi VPN ringan dan elegan untuk kebutuhan koneksi Anda.'),
-                      const SizedBox(height: 10),
-                      Text('Created with ❤️', style: TextStyle(color: Colors.grey.shade600)),
-                    ],
-                  );
-                },
+                onTap: onOpenAbout,
                 cardColor: isDark ? Colors.grey.shade900 : Colors.transparent,
                 textColor: textColor,
                 isTransparent: true,
@@ -767,7 +756,7 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-// ======================= PROFIL SCREEN (MONITORING) =======================
+// ======================= PROFIL SCREEN (CONFIG EDITOR & MONITORING) =======================
 
 class ProfileScreen extends StatelessWidget {
   final List<String> configs;
@@ -812,21 +801,30 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ==========================================
+    // JIKA VPN BELUM KONEK (CONFIG EDITOR)
+    // ==========================================
     if (!isConnected) {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold)),
           actions: [
             IconButton(
-              icon: const Icon(Icons.lock_outline, color: Colors.grey),
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hubungkan VPN terlebih dahulu untuk membuka daftar profil.'))),
+              icon: const Icon(Icons.add), 
+              tooltip: 'Tambah Config',
+              onPressed: () => _openEditor(context),
             ),
           ],
         ),
-        body: const ConfigEditorScreen(initial: '', isReadOnly: true),
+        body: configs.isEmpty 
+            ? const Center(child: Text('Belum ada config. Tekan + untuk menambah.'))
+            : ConfigEditorScreen(initial: configs.isNotEmpty ? configs[0] : '', isReadOnly: true),
       );
     }
 
+    // ==========================================
+    // JIKA VPN SUDAH KONEK (DAFTAR PROXY)
+    // ==========================================
     return Scaffold(
       appBar: AppBar(
         title: const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -936,7 +934,7 @@ class ProfileScreen extends StatelessWidget {
   }
 }
 
-// ======================= CONFIG EDITOR =======================
+// ======================= CONFIG EDITOR (AUTO-FILL YAML) =======================
 
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
