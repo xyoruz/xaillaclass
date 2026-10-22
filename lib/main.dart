@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Wajib ditambahkan untuk membaca Clipboard
+import 'package:flutter/services.dart'; // Wajib untuk Clipboard
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -139,11 +139,21 @@ class ConfigParser {
 
     try {
       if (t.startsWith('vmess://')) {
-        final body = t.substring(8);
-        final m = jsonDecode(utf8.decode(base64.decode(base64.normalize(body))));
+        // --- PERBAIKAN PARSING VMESS ---
+        String body = t.substring(8);
+        body = body.replaceAll(RegExp(r'\s+'), ''); // Hapus spasi/enter tak terlihat
+        
+        // Tambahkan padding base64 jika kurang
+        while (body.length % 4 != 0) {
+          body += '=';
+        }
+        
+        final decoded = utf8.decode(base64.decode(base64.normalize(body)));
+        final m = jsonDecode(decoded);
+        
         final name = m['ps'] ?? 'VMess';
         final server = m['add'] ?? '';
-        final port = m['port'] ?? '443';
+        final port = m['port']?.toString() ?? '443';
         final uuid = m['id'] ?? '';
         final net = m['net'] ?? 'tcp';
         final tls = (m['tls'] ?? '').toString().isNotEmpty;
@@ -221,7 +231,9 @@ type: ss
 cipher: aes-256-gcm
 password: ${uri.userInfo}''';
       }
-    } catch (e) {}
+    } catch (e) {
+      print("Gagal parse config: $e");
+    }
     return t;
   }
 
@@ -234,7 +246,8 @@ password: ${uri.userInfo}''';
         return ProfileInfo(f['name'] ?? 'Tanpa nama', (f['type'] ?? '?').toLowerCase());
       }
       if (t.startsWith('vmess://')) {
-        final body = t.substring(8);
+        String body = t.substring(8).replaceAll(RegExp(r'\s+'), '');
+        while (body.length % 4 != 0) { body += '='; }
         final m = jsonDecode(utf8.decode(base64.decode(base64.normalize(body))));
         return ProfileInfo((m['ps'] ?? 'VMess').toString(), 'vmess');
       }
@@ -823,7 +836,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_isInitialized) return;
     _controllers = [];
     
-    // JIKA KOSONG, BIARKAN KOSONG (TIDAK ADA TEMPLATE)
     if (widget.configs.isNotEmpty) {
       for (var config in widget.configs) {
         _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
@@ -842,21 +854,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  // FUNGSI BARU: BACA CLIPBOARD SAAT +
+  // FUNGSI BARU: BACA CLIPBOARD & AUTO-PARSE DENGAN AMAN
   Future<void> _addNewField() async {
     String initialText = '';
     try {
-      // Ambil teks dari clipboard HP
       final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipboardData?.text?.trim() ?? '';
       
-      // Jika yang dicopy adalah link VPN, otomatis ubah ke YAML
       if (text.startsWith('vmess://') || text.startsWith('trojan://') || text.startsWith('vless://') || text.startsWith('ss://')) {
-        initialText = ConfigParser.toYaml(text);
+        try {
+          initialText = ConfigParser.toYaml(text);
+        } catch (e) {
+          initialText = text; // Fallback jika parsing gagal
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Format link tidak valid, silakan edit manual.')));
+          }
+        }
       }
-    } catch (e) {
-      // Abaikan jika gagal baca clipboard
-    }
+    } catch (e) {}
 
     setState(() {
       _controllers.add(TextEditingController(text: initialText));
@@ -987,7 +1002,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.add, color: Colors.black),
-              onPressed: _addNewField, // Memanggil fungsi clipboard
+              onPressed: _addNewField,
             ),
             IconButton(
               icon: const Icon(Icons.save, color: Colors.black),
