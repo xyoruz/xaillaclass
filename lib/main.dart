@@ -333,7 +333,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
     });
     
-    // Minta izin notifikasi pertama kali
+    // Permintaan izin notifikasi
     if (!(prefs.getBool('perm_asked') ?? false)) {
       await Permission.notification.request();
       await prefs.setBool('perm_asked', true);
@@ -351,9 +351,11 @@ class _MainNavigatorState extends State<MainNavigator> {
     await prefs.setInt('selected_index', selectedIndex);
   }
 
-  void _addConfig(String config) {
+  void _addConfig(String rawCombinedConfig) {
+    final newConfigs = rawCombinedConfig.split('---').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    
     setState(() {
-      savedConfigs = [...savedConfigs, config];
+      savedConfigs = [...savedConfigs, ...newConfigs];
       selectedIndex = savedConfigs.length - 1;
     });
     _saveConfigs();
@@ -405,7 +407,6 @@ class _MainNavigatorState extends State<MainNavigator> {
       final idx = selectedIndex.clamp(0, savedConfigs.length - 1);
       final p = ConfigParser.prepare(savedConfigs[idx]);
       
-      // Minta izin VPN saat Start
       if (await _v2ray.requestPermission()) {
         _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
       } else {
@@ -432,7 +433,6 @@ class _MainNavigatorState extends State<MainNavigator> {
     }
   }
 
-  // FUNGSI NAVIGASI
   void _goToConfig() {
     Navigator.push(
       context,
@@ -578,70 +578,63 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 30),
 
-              // KARTU STATUS BESAR
+              // KARTU STATUS (LEBIH KECIL, TANPA IKON, RAPI)
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                   decoration: BoxDecoration(
-                    color: isConnected 
-                        ? Colors.green.shade600 
+                    color: isConnected
+                        ? Colors.green.shade600
                         : (isDark ? Colors.grey.shade800 : Colors.grey.shade400),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: (isConnected ? Colors.green : Colors.grey).withOpacity(0.3),
-                        blurRadius: 15,
-                        offset: const Offset(0, 8),
+                        color: (isConnected ? Colors.green : Colors.grey).withOpacity(0.2),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       )
                     ],
                   ),
                   child: Row(
                     children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: isBusy 
-                            ? const Padding(
-                                padding: EdgeInsets.all(12.0),
-                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                              )
-                            : Icon(
-                                isConnected ? Icons.shield : Icons.block,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                      ),
-                      const SizedBox(width: 20),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              isConnected ? 'Connected' : 'Stopped',
+                              isBusy
+                                  ? (isConnected ? 'Disconnecting...' : 'Connecting...')
+                                  : (isConnected ? 'Connected' : 'Disconnected'),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 22,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              isConnected ? '$duration • ↓${_speed(downSpeed)} KB/s ↑${_speed(upSpeed)} KB/s' : 'Tap to start',
+                              isConnected
+                                  ? '↓ ${_speed(downSpeed)} KB/s  |  ↑ ${_speed(upSpeed)} KB/s  |  $duration'
+                                  : 'Tap to connect',
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.9),
-                                fontSize: 14,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
                         ),
                       ),
+                      if (isBusy)
+                        const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        ),
                     ],
                   ),
                 ),
@@ -756,9 +749,9 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-// ======================= PROFIL SCREEN (CONFIG EDITOR & MONITORING) =======================
+// ======================= PROFIL SCREEN =======================
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   final List<String> configs;
   final int selectedIndex;
   final bool isConnected, isBusy;
@@ -776,12 +769,19 @@ class ProfileScreen extends StatelessWidget {
     required this.onAdd, required this.onEdit, required this.onDelete,
   });
 
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  int _activeTab = 0;
+
   Future<void> _openEditor(BuildContext context, {int? index}) async {
     final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => ConfigEditorScreen(initial: index == null ? '' : configs[index])),
+      MaterialPageRoute(builder: (_) => ConfigEditorScreen(initial: index == null ? '' : widget.configs[index])),
     );
     if (result == null) return;
-    if (index == null) { onAdd(result); } else { onEdit(index, result); }
+    if (index == null) { widget.onAdd(result); } else { widget.onEdit(index, result); }
   }
 
   void _showMenu(BuildContext context, int index) {
@@ -792,45 +792,70 @@ class ProfileScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(leading: const Icon(Icons.edit), title: const Text('Edit'), onTap: () { Navigator.pop(ctx); _openEditor(context, index: index); }),
-            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Hapus'), onTap: () { Navigator.pop(ctx); onDelete(index); }),
+            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Hapus'), onTap: () { Navigator.pop(ctx); widget.onDelete(index); }),
           ],
         ),
       ),
     );
   }
 
+  List<MapEntry<int, String>> _getDisplayedConfigs() {
+    final list = widget.configs.asMap().entries.toList();
+    if (_activeTab == 1 || _activeTab == 2) {
+      list.sort((a, b) {
+        final pingA = widget.pings[a.key] ?? 99999;
+        final pingB = widget.pings[b.key] ?? 99999;
+        return pingA.compareTo(pingB);
+      });
+    } else if (_activeTab == 3) {
+      list.sort((a, b) {
+        final nameA = ConfigParser.describe(a.value).name.toLowerCase();
+        final nameB = ConfigParser.describe(b.value).name.toLowerCase();
+        return nameA.compareTo(nameB);
+      });
+    }
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // ==========================================
-    // JIKA VPN BELUM KONEK (CONFIG EDITOR)
-    // ==========================================
-    if (!isConnected) {
+    if (!widget.isConnected) {
       return Scaffold(
+        backgroundColor: Colors.white,
         appBar: AppBar(
-          title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold)),
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.black),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: const Text('Config', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
           actions: [
             IconButton(
-              icon: const Icon(Icons.add), 
-              tooltip: 'Tambah Config',
+              icon: const Icon(Icons.add, color: Colors.black), 
               onPressed: () => _openEditor(context),
             ),
           ],
         ),
-        body: configs.isEmpty 
-            ? const Center(child: Text('Belum ada config. Tekan + untuk menambah.'))
-            : ConfigEditorScreen(initial: configs.isNotEmpty ? configs[0] : '', isReadOnly: true),
+        body: ConfigEditorScreen(
+          initial: widget.configs.isNotEmpty ? widget.configs[0] : '', 
+          isReadOnly: true,
+        ),
       );
     }
 
-    // ==========================================
-    // JIKA VPN SUDAH KONEK (DAFTAR PROXY)
-    // ==========================================
+    final displayed = _getDisplayedConfigs();
+
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(icon: const Icon(Icons.add), onPressed: () => _openEditor(context)),
-        ],
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
       ),
       body: Column(
         children: [
@@ -845,10 +870,10 @@ class ProfileScreen extends StatelessWidget {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      _tabButton('Select', true),
-                      _tabButton('Best Ping', false),
-                      _tabButton('Fallback', false),
-                      _tabButton('Load Balance', false),
+                      _tabButton('Select', 0),
+                      _tabButton('Best Ping', 1),
+                      _tabButton('Fallback', 2),
+                      _tabButton('Load Balance', 3),
                     ],
                   ),
                 ),
@@ -857,20 +882,25 @@ class ProfileScreen extends StatelessWidget {
           ),
           const Divider(),
           Expanded(
-            child: configs.isEmpty
+            child: widget.configs.isEmpty
                 ? const Center(child: Text('Belum ada profil. Tekan + untuk menambah.'))
                 : ListView.builder(
                     padding: const EdgeInsets.all(16),
-                    itemCount: configs.length,
-                    itemBuilder: (context, index) {
-                      final desc = ConfigParser.describe(configs[index]);
-                      final isSelected = index == selectedIndex;
-                      final ping = pings[index];
+                    itemCount: displayed.length,
+                    itemBuilder: (context, i) {
+                      final entry = displayed[i];
+                      final index = entry.key;
+                      final configString = entry.value;
+                      
+                      final desc = ConfigParser.describe(configString);
+                      final isSelected = index == widget.selectedIndex;
+                      final ping = widget.pings[index];
 
                       return Card(
                         elevation: 0,
                         color: isSelected ? Colors.purple.shade900 : (Theme.of(context).brightness == Brightness.dark ? Colors.grey.shade900 : Colors.grey.shade100),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: Icon(
@@ -900,7 +930,7 @@ class ProfileScreen extends StatelessWidget {
                                 const Padding(padding: EdgeInsets.only(left: 8.0), child: Icon(Icons.check_circle, color: Colors.white, size: 20)),
                             ],
                           ),
-                          onTap: () => onSelect(index),
+                          onTap: () => widget.onSelect(index),
                           onLongPress: () => _showMenu(context, index),
                         ),
                       );
@@ -911,30 +941,49 @@ class ProfileScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.purple.shade900,
-        onPressed: () => _openEditor(context),
+        onPressed: () {
+          widget.onRefreshPing();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Memperbarui Ping semua akun...'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        },
         child: const Icon(Icons.bolt, color: Colors.white),
       ),
     );
   }
 
-  Widget _tabButton(String text, bool isActive) {
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: isActive ? Colors.purple.shade900 : Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
-        border: isActive ? null : Border.all(color: Colors.grey.withOpacity(0.3)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: isActive ? FontWeight.bold : FontWeight.normal),
+  Widget _tabButton(String text, int tabIndex) {
+    final isActive = _activeTab == tabIndex;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _activeTab = tabIndex;
+        });
+      },
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.purple.shade900 : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: isActive ? null : Border.all(color: Colors.grey.withOpacity(0.3)),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: isActive ? Colors.white : Colors.grey, 
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
       ),
     );
   }
 }
 
-// ======================= CONFIG EDITOR (AUTO-FILL YAML) =======================
+// ======================= CONFIG EDITOR =======================
 
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
@@ -946,104 +995,83 @@ class ConfigEditorScreen extends StatefulWidget {
 }
 
 class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
-  late TextEditingController _controller;
+  List<TextEditingController> _controllers = [];
 
   @override
   void initState() {
     super.initState();
-    final yamlInit = ConfigParser.toYaml(widget.initial);
-    _controller = TextEditingController(text: yamlInit);
+    if (widget.initial.isNotEmpty) {
+      final parts = widget.initial.split('---');
+      for (var part in parts) {
+        if (part.trim().isNotEmpty) {
+          _controllers.add(TextEditingController(text: ConfigParser.toYaml(part)));
+        }
+      }
+    }
+    
+    if (_controllers.isEmpty) {
+      _controllers.add(TextEditingController());
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    for (var controller in _controllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  void _showAddMenu() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        final urlController = TextEditingController();
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 16, right: 16, top: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('Tambah Config / Paste URL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 16),
-              TextField(
-                controller: urlController,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: 'Paste link vmess://, trojan://, dll...',
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () {
-                  final raw = urlController.text.trim();
-                  if (raw.isNotEmpty) {
-                    final yamlText = ConfigParser.toYaml(raw);
-                    setState(() {
-                      _controller.text = yamlText;
-                    });
-                  }
-                  Navigator.pop(ctx);
-                },
-                child: const Text('Isi Otomatis ke Editor'),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        );
-      },
-    );
+  void _addNewField() {
+    setState(() {
+      _controllers.add(TextEditingController());
+    });
   }
 
   void _save() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) {
+    List<String> validConfigs = [];
+    for (var ctrl in _controllers) {
+      final text = ctrl.text.trim();
+      if (text.isNotEmpty) {
+        validConfigs.add(text);
+      }
+    }
+
+    if (validConfigs.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config tidak boleh kosong')));
       return;
     }
-    Navigator.pop(context, text);
+    
+    Navigator.pop(context, validConfigs.join('\n---\n'));
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Config Editor'),
-        actions: [
-          if (!widget.isReadOnly)
-            IconButton(icon: const Icon(Icons.add), tooltip: 'Paste URL', onPressed: _showAddMenu),
-          if (!widget.isReadOnly)
-            IconButton(icon: const Icon(Icons.save), onPressed: _save),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: TextField(
-          controller: _controller,
-          readOnly: widget.isReadOnly,
-          maxLines: null,
-          expands: true,
-          textAlignVertical: TextAlignVertical.top,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-          decoration: InputDecoration(
-            border: const OutlineInputBorder(),
-            hintText: widget.isReadOnly
-                ? 'Hubungkan VPN terlebih dahulu untuk mengedit'
-                : 'Ketik manual YAML di sini, atau tekan tombol + di atas untuk paste link otomatis...',
-            filled: widget.isReadOnly,
-            fillColor: widget.isReadOnly ? Colors.grey.withOpacity(0.1) : null,
+    return ListView.builder(
+      padding: const EdgeInsets.all(16.0),
+      itemCount: _controllers.length,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 20.0),
+          child: TextField(
+            controller: _controllers[index],
+            readOnly: widget.isReadOnly,
+            maxLines: null,
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              hintText: widget.isReadOnly 
+                  ? '' 
+                  : 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
+              hintStyle: const TextStyle(color: Colors.grey),
+            ),
+            style: const TextStyle(
+              fontFamily: 'monospace', 
+              fontSize: 14,
+              color: Colors.black87,
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
