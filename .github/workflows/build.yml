@@ -1,4 +1,4 @@
-name: Build Xailla APK
+name: Build Xailla VPN APK
 
 on:
   push:
@@ -23,18 +23,26 @@ jobs:
           channel: 'stable'
           cache: true
           
-      # INI ADALAH BARIS AJAIB YANG MEMBUAT FOLDER ANDROID
       - name: Generate missing Android files
         run: flutter create . --project-name xaillaclass --org com.xailla
           
       - name: Install Dependencies
         run: flutter pub get
-        
+
+      # MENAMBAHKAN IZIN VPN & SERVICE KE ANDROIDMANIFEST.XML
+      - name: Inject VPN Permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # Tambah izin internet dan VPN
+          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>' $MANIFEST
+          # Tambah service V2Ray (Wajib untuk VPN)
+          sed -i '/<\/application>/i \        <service android:name="com.github.xiaokang.flutter_v2ray.V2rayVpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">\n            <intent-filter>\n                <action android:name="android.net.VpnService"/>\n            </intent-filter>\n        </service>' $MANIFEST
+          
       - name: Build APK (ARM64)
         run: flutter build apk --release --target-platform android-arm64
         
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Xailla-Class-APK
+          name: Xailla-VPN-APK
           path: build/app/outputs/flutter-apk/app-release.apk
