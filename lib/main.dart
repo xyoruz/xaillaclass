@@ -1019,25 +1019,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       body: Column(
         children: [
+          // Bagian @KENTANG_INJECTOR sudah dihapus dari sini
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('@KENTANG_INJECTOR', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold, fontSize: 16)),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _tabButton('Select', 0),
-                      _tabButton('Best Ping', 1),
-                      _tabButton('Fallback', 2),
-                      _tabButton('Load Balance', 3),
-                    ],
-                  ),
-                ),
-              ],
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _tabButton('Select', 0),
+                  _tabButton('Best Ping', 1),
+                  _tabButton('Fallback', 2),
+                  _tabButton('Load Balance', 3),
+                ],
+              ),
             ),
           ),
           const Divider(),
