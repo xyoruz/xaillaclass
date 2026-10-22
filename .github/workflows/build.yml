@@ -74,6 +74,9 @@ jobs:
           </manifest>
           MANIFEST
           
+      - name: Set minSdkVersion 21
+        run: sed -i "s/flutter.minSdkVersion/21/" android/app/build.gradle
+
       - name: Build APK (ARM64)
         run: flutter build apk --release --target-platform android-arm64
         
