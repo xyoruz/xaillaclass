@@ -333,7 +333,6 @@ class _MainNavigatorState extends State<MainNavigator> {
       if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
     });
     
-    // Permintaan izin notifikasi
     if (!(prefs.getBool('perm_asked') ?? false)) {
       await Permission.notification.request();
       await prefs.setBool('perm_asked', true);
@@ -540,7 +539,6 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // LOGO & JUDUL
               Row(
                 children: [
                   Container(
@@ -578,7 +576,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 30),
 
-              // KARTU STATUS (LEBIH KECIL, TANPA IKON, RAPI)
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
@@ -641,7 +638,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
-              // MENU EDIT CONFIG
               _menuCard(
                 context: context,
                 icon: Icons.edit_document,
@@ -654,7 +650,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
 
-              // MENU SETTINGS
               _menuCard(
                 context: context,
                 icon: Icons.settings,
@@ -668,7 +663,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
 
-              // MENU ABOUT
               _menuCard(
                 context: context,
                 icon: Icons.info_outline,
@@ -832,15 +826,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
           title: const Text('Config', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
           actions: [
             IconButton(
-              icon: const Icon(Icons.add, color: Colors.black), 
-              onPressed: () => _openEditor(context),
+              icon: const Icon(Icons.add, color: Colors.black),
+              tooltip: 'Tambah Akun',
+              onPressed: () async {
+                final result = await Navigator.of(context).push<String>(
+                  MaterialPageRoute(builder: (_) => const ConfigEditorScreen(initial: '')),
+                );
+                if (result != null) widget.onAdd(result);
+              },
             ),
           ],
         ),
-        body: ConfigEditorScreen(
-          initial: widget.configs.isNotEmpty ? widget.configs[0] : '', 
-          isReadOnly: true,
-        ),
+        body: widget.configs.isEmpty
+            ? const Center(child: Text('Belum ada config. Tekan + untuk menambah.', style: TextStyle(color: Colors.grey)))
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: widget.configs.length,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: GestureDetector(
+                      onTap: () => _openEditor(context, index: index),
+                      child: Text(
+                        ConfigParser.toYaml(widget.configs[index]),
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 14, color: Colors.black87),
+                      ),
+                    ),
+                  );
+                },
+              ),
       );
     }
 
@@ -983,7 +997,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-// ======================= CONFIG EDITOR =======================
+// ======================= CONFIG EDITOR (HALAMAN INPUT) =======================
 
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
@@ -1047,31 +1061,59 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16.0),
-      itemCount: _controllers.length,
-      itemBuilder: (context, index) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 20.0),
-          child: TextField(
-            controller: _controllers[index],
-            readOnly: widget.isReadOnly,
-            maxLines: null,
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              hintText: widget.isReadOnly 
-                  ? '' 
-                  : 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
-              hintStyle: const TextStyle(color: Colors.grey),
-            ),
-            style: const TextStyle(
-              fontFamily: 'monospace', 
-              fontSize: 14,
-              color: Colors.black87,
-            ),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add, color: Colors.black),
+            tooltip: 'Tambah Baris',
+            onPressed: _addNewField,
           ),
-        );
-      },
+          IconButton(
+            icon: const Icon(Icons.save, color: Colors.black),
+            tooltip: 'Simpan',
+            onPressed: _save,
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: List.generate(_controllers.length, (index) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 30.0),
+              child: TextField(
+                controller: _controllers[index],
+                readOnly: widget.isReadOnly,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  hintText: 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
+                  hintStyle: TextStyle(color: Colors.grey),
+                ),
+                style: const TextStyle(
+                  fontFamily: 'monospace', 
+                  fontSize: 14,
+                  color: Colors.black87,
+                  height: 1.5,
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
     );
   }
 }
