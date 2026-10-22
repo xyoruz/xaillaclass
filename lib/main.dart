@@ -29,7 +29,7 @@ class ConfigParser {
     return lower.contains('server:') && lower.contains('type:');
   }
 
-  static Map<String, String> _fields(String text) {
+  static Map<String, String> getFields(String text) {
     final map = <String, String>{};
     for (final line in text.split('\n')) {
       var l = line.trim();
@@ -58,7 +58,7 @@ class ConfigParser {
   static String toLink(String raw) {
     final t = raw.trim();
     if (!isYaml(t)) return t;
-    final f = _fields(t);
+    final f = getFields(t);
     final type = (f['type'] ?? '').toLowerCase();
     final name = f['name'] ?? 'Xailla';
     final server = f['server'] ?? '';
@@ -220,7 +220,7 @@ ws-opts:
     try {
       if (t.startsWith('{')) return const ProfileInfo('Custom JSON', 'json');
       if (isYaml(t)) {
-        final f = _fields(t);
+        final f = getFields(t);
         return ProfileInfo(f['name'] ?? 'Tanpa nama', (f['type'] ?? '?').toLowerCase());
       }
       if (t.startsWith('vmess://')) {
@@ -297,6 +297,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   late final FlutterV2ray _v2ray;
   bool isConnected = false;
   bool isBusy = false;
+  bool isRefreshingPing = false;
   String duration = '00:00:00';
   int downSpeed = 0;
   int upSpeed = 0;
@@ -371,24 +372,43 @@ class _MainNavigatorState extends State<MainNavigator> {
 
   void _deleteConfig(int index) {
     setState(() {
-      final list = List<String>.from(savedConfigs);
-      list.removeAt(index);
-      savedConfigs = list;
-      pings = {};
-      if (selectedIndex >= savedConfigs.length) {
-        selectedIndex = savedConfigs.isEmpty ? 0 : savedConfigs.length - 1;
+      if (index == -1) {
+        savedConfigs = [];
+        selectedIndex = 0;
+      } else {
+        final list = List<String>.from(savedConfigs);
+        list.removeAt(index);
+        savedConfigs = list;
+        if (selectedIndex >= savedConfigs.length) {
+          selectedIndex = savedConfigs.isEmpty ? 0 : savedConfigs.length - 1;
+        }
       }
+      pings = {};
     });
     _saveConfigs();
   }
 
-  void _select(int index) {
-    if (isConnected) {
-      _snack('Putuskan koneksi dulu, lalu pilih profil lain.');
-      return;
-    }
+  void _select(int index) async {
+    if (isBusy) return;
     setState(() => selectedIndex = index);
     _saveConfigs();
+
+    if (isConnected) {
+      setState(() => isBusy = true);
+      _snack('Berganti ke akun lain...');
+      
+      try {
+        _v2ray.stopV2Ray();
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        final p = ConfigParser.prepare(savedConfigs[index]);
+        _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
+      } catch (e) {
+        _snack('Gagal berganti akun: $e');
+      } finally {
+        if (mounted) setState(() => isBusy = false);
+      }
+    }
   }
 
   Future<void> _toggleConnection() async {
@@ -419,17 +439,24 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 
   Future<void> _measurePings() async {
+    if (isRefreshingPing) return;
+    setState(() => isRefreshingPing = true);
+
     for (int i = 0; i < savedConfigs.length; i++) {
-      if (!mounted || !isConnected) return;
+      if (!mounted || !isConnected) {
+        break;
+      }
       try {
         final p = ConfigParser.prepare(savedConfigs[i]);
         final d = await _v2ray.getServerDelay(config: p.config).timeout(const Duration(seconds: 8));
-        if (!mounted || !isConnected) return;
+        if (!mounted || !isConnected) break;
         setState(() => pings[i] = d);
       } catch (_) {
         if (mounted && isConnected) setState(() => pings[i] = -1);
       }
     }
+
+    if (mounted) setState(() => isRefreshingPing = false);
   }
 
   void _goToConfig() {
@@ -442,6 +469,7 @@ class _MainNavigatorState extends State<MainNavigator> {
           isConnected: isConnected,
           isBusy: isBusy,
           pings: pings,
+          isRefreshingPing: isRefreshingPing,
           onSelect: _select,
           onToggle: _toggleConnection,
           onRefreshPing: () {
@@ -749,6 +777,7 @@ class ProfileScreen extends StatefulWidget {
   final List<String> configs;
   final int selectedIndex;
   final bool isConnected, isBusy;
+  final bool isRefreshingPing;
   final Map<int, int> pings;
   final void Function(int) onSelect;
   final VoidCallback onToggle, onRefreshPing;
@@ -759,6 +788,7 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key, required this.configs, required this.selectedIndex,
     required this.isConnected, required this.isBusy, required this.pings,
+    required this.isRefreshingPing,
     required this.onSelect, required this.onToggle, required this.onRefreshPing,
     required this.onAdd, required this.onEdit, required this.onDelete,
   });
@@ -770,12 +800,110 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   int _activeTab = 0;
 
-  Future<void> _openEditor(BuildContext context, {int? index}) async {
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => ConfigEditorScreen(initial: index == null ? '' : widget.configs[index])),
-    );
-    if (result == null) return;
-    if (index == null) { widget.onAdd(result); } else { widget.onEdit(index, result); }
+  List<TextEditingController> _controllers = [];
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initConfigs();
+  }
+
+  void _initConfigs() {
+    if (_isInitialized) return;
+    _controllers = [];
+    
+    if (widget.configs.isNotEmpty) {
+      for (var config in widget.configs) {
+        _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
+      }
+    } else {
+      _controllers.add(TextEditingController());
+    }
+    _isInitialized = true;
+  }
+
+  @override
+  void dispose() {
+    for (var ctrl in _controllers) {
+      ctrl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addNewField() {
+    setState(() {
+      _controllers.add(TextEditingController());
+    });
+  }
+
+  void _saveConfigs() {
+    List<String> validConfigs = [];
+    List<String> accountNames = [];
+    List<String> errors = [];
+
+    for (int i = 0; i < _controllers.length; i++) {
+      final rawText = _controllers[i].text.trim();
+      if (rawText.isEmpty) continue;
+
+      final blocks = rawText.split('---').map((e) => e.trim()).where((e) => e.isNotEmpty);
+
+      for (var block in blocks) {
+        try {
+          if (block.startsWith('{')) {
+            jsonDecode(block);
+          } else if (ConfigParser.isYaml(block)) {
+            final f = ConfigParser.getFields(block);
+            if ((f['server'] ?? '').isEmpty) throw Exception('Server kosong');
+            if ((f['type'] ?? '').isEmpty) throw Exception('Tipe (trojan/vmess) kosong');
+          } else {
+            final uri = Uri.parse(block);
+            if (!['vmess', 'vless', 'trojan', 'ss'].contains(uri.scheme)) {
+              throw Exception('Format link tidak dikenali');
+            }
+          }
+
+          final info = ConfigParser.describe(block);
+          final name = info.name;
+
+          if (accountNames.contains(name)) {
+            errors.add('Akun "$name" ganda. Ganti nama salah satunya.');
+            continue;
+          }
+
+          accountNames.add(name);
+          validConfigs.add(block);
+
+        } catch (e) {
+          errors.add('Format tidak valid pada salah satu akun: ${e.toString().replaceAll('Exception: ', '')}');
+        }
+      }
+    }
+
+    if (errors.isNotEmpty) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Gagal Menyimpan'),
+          content: Text(errors.join('\n\n')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Perbaiki')),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (validConfigs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config tidak boleh kosong')));
+      return;
+    }
+
+    widget.onDelete(-1);
+    widget.onAdd(validConfigs.join('\n---\n'));
+    
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config berhasil disimpan')));
+    Navigator.pop(context);
   }
 
   void _showMenu(BuildContext context, int index) {
@@ -785,8 +913,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(leading: const Icon(Icons.edit), title: const Text('Edit'), onTap: () { Navigator.pop(ctx); _openEditor(context, index: index); }),
-            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Hapus'), onTap: () { Navigator.pop(ctx); widget.onDelete(index); }),
+            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Hapus Akun Ini'), onTap: () { 
+              Navigator.pop(ctx); 
+              setState(() {
+                _controllers[index].dispose();
+                _controllers.removeAt(index);
+                if (_controllers.isEmpty) _controllers.add(TextEditingController());
+              });
+            }),
           ],
         ),
       ),
@@ -823,38 +957,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
             icon: const Icon(Icons.arrow_back, color: Colors.black),
             onPressed: () => Navigator.pop(context),
           ),
-          title: const Text('Config', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+          title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
           actions: [
             IconButton(
               icon: const Icon(Icons.add, color: Colors.black),
-              tooltip: 'Tambah Akun',
-              onPressed: () async {
-                final result = await Navigator.of(context).push<String>(
-                  MaterialPageRoute(builder: (_) => const ConfigEditorScreen(initial: '')),
-                );
-                if (result != null) widget.onAdd(result);
-              },
+              onPressed: _addNewField,
+            ),
+            IconButton(
+              icon: const Icon(Icons.save, color: Colors.black),
+              onPressed: _saveConfigs,
             ),
           ],
         ),
-        body: widget.configs.isEmpty
-            ? const Center(child: Text('Belum ada config. Tekan + untuk menambah.', style: TextStyle(color: Colors.grey)))
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: widget.configs.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16.0),
-                    child: GestureDetector(
-                      onTap: () => _openEditor(context, index: index),
-                      child: Text(
-                        ConfigParser.toYaml(widget.configs[index]),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 14, color: Colors.black87),
-                      ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: List.generate(_controllers.length, (index) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 30.0),
+                child: GestureDetector(
+                  onLongPress: () => _showMenu(context, index),
+                  child: TextField(
+                    controller: _controllers[index],
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                      hintText: 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
+                      hintStyle: TextStyle(color: Colors.grey),
                     ),
-                  );
-                },
-              ),
+                    style: const TextStyle(
+                      fontFamily: 'monospace', 
+                      fontSize: 14,
+                      color: Colors.black87,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
       );
     }
 
@@ -955,16 +1101,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.purple.shade900,
-        onPressed: () {
-          widget.onRefreshPing();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Memperbarui Ping semua akun...'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        },
-        child: const Icon(Icons.bolt, color: Colors.white),
+        onPressed: widget.isRefreshingPing ? null : () => widget.onRefreshPing(),
+        child: widget.isRefreshingPing
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              )
+            : const Icon(Icons.bolt, color: Colors.white),
       ),
     );
   }
@@ -991,127 +1135,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: isActive ? Colors.white : Colors.grey, 
             fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ======================= CONFIG EDITOR (HALAMAN INPUT) =======================
-
-class ConfigEditorScreen extends StatefulWidget {
-  final String initial;
-  final bool isReadOnly;
-  const ConfigEditorScreen({super.key, required this.initial, this.isReadOnly = false});
-
-  @override
-  State<ConfigEditorScreen> createState() => _ConfigEditorScreenState();
-}
-
-class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
-  List<TextEditingController> _controllers = [];
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.initial.isNotEmpty) {
-      final parts = widget.initial.split('---');
-      for (var part in parts) {
-        if (part.trim().isNotEmpty) {
-          _controllers.add(TextEditingController(text: ConfigParser.toYaml(part)));
-        }
-      }
-    }
-    
-    if (_controllers.isEmpty) {
-      _controllers.add(TextEditingController());
-    }
-  }
-
-  @override
-  void dispose() {
-    for (var controller in _controllers) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  void _addNewField() {
-    setState(() {
-      _controllers.add(TextEditingController());
-    });
-  }
-
-  void _save() {
-    List<String> validConfigs = [];
-    for (var ctrl in _controllers) {
-      final text = ctrl.text.trim();
-      if (text.isNotEmpty) {
-        validConfigs.add(text);
-      }
-    }
-
-    if (validConfigs.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config tidak boleh kosong')));
-      return;
-    }
-    
-    Navigator.pop(context, validConfigs.join('\n---\n'));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add, color: Colors.black),
-            tooltip: 'Tambah Baris',
-            onPressed: _addNewField,
-          ),
-          IconButton(
-            icon: const Icon(Icons.save, color: Colors.black),
-            tooltip: 'Simpan',
-            onPressed: _save,
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: List.generate(_controllers.length, (index) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 30.0),
-              child: TextField(
-                controller: _controllers[index],
-                readOnly: widget.isReadOnly,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                  hintText: 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
-                  hintStyle: TextStyle(color: Colors.grey),
-                ),
-                style: const TextStyle(
-                  fontFamily: 'monospace', 
-                  fontSize: 14,
-                  color: Colors.black87,
-                  height: 1.5,
-                ),
-              ),
-            );
-          }),
         ),
       ),
     );
