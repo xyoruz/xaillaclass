@@ -802,20 +802,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   List<TextEditingController> _controllers = [];
   bool _isInitialized = false;
-
-  // Template YAML default
-  static const String _defaultTemplate = '''name: Akun Baru
-server: 1.2.3.4
-port: 443
-type: trojan
-password: isi-password
-skip-cert-verify: true
-sni: domain.com
-network: ws
-ws-opts:
-  path: /trojan
-  headers:
-    Host: domain.com''';
+  bool _isParsing = false;
 
   @override
   void initState() {
@@ -827,13 +814,17 @@ ws-opts:
     if (_isInitialized) return;
     _controllers = [];
     
+    // JIKA KOSONG, BIARKAN KOSONG (TIDAK ADA TEMPLATE)
     if (widget.configs.isNotEmpty) {
       for (var config in widget.configs) {
-        _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
+        final ctrl = TextEditingController(text: ConfigParser.toYaml(config));
+        ctrl.addListener(() => _onTextChanged(ctrl));
+        _controllers.add(ctrl);
       }
     } else {
-      // Langsung isi dengan template saat pertama dibuka
-      _controllers.add(TextEditingController(text: _defaultTemplate));
+      final ctrl = TextEditingController();
+      ctrl.addListener(() => _onTextChanged(ctrl));
+      _controllers.add(ctrl);
     }
     _isInitialized = true;
   }
@@ -848,9 +839,27 @@ ws-opts:
 
   void _addNewField() {
     setState(() {
-      // Tambah kolom baru yang langsung terisi template
-      _controllers.add(TextEditingController(text: _defaultTemplate));
+      final ctrl = TextEditingController();
+      ctrl.addListener(() => _onTextChanged(ctrl));
+      _controllers.add(ctrl);
     });
+  }
+
+  // FUNGSI BARU: Deteksi Paste Link & Ubah ke YAML Otomatis
+  void _onTextChanged(TextEditingController ctrl) {
+    if (_isParsing) return;
+    final text = ctrl.text.trim();
+    
+    if (text.startsWith('vmess://') || text.startsWith('trojan://') || text.startsWith('vless://')) {
+      _isParsing = true;
+      final yaml = ConfigParser.toYaml(text);
+      
+      if (yaml != text) {
+        ctrl.text = yaml;
+        ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+      }
+      _isParsing = false;
+    }
   }
 
   void _saveConfigs() {
@@ -934,7 +943,7 @@ ws-opts:
               setState(() {
                 _controllers[index].dispose();
                 _controllers.removeAt(index);
-                if (_controllers.isEmpty) _controllers.add(TextEditingController(text: _defaultTemplate));
+                if (_controllers.isEmpty) _controllers.add(TextEditingController());
               });
             }),
           ],
@@ -998,7 +1007,7 @@ ws-opts:
                     controller: _controllers[index],
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
-                    // Menghilangkan hint text
+                    // HAPUS HINT & TEMPLATE BAWAAN
                     decoration: const InputDecoration(
                       border: InputBorder.none,
                       isDense: true,
