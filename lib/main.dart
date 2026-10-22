@@ -642,9 +642,8 @@ class ProfileScreen extends StatelessWidget {
             ),
           ],
         ),
-        body: const ConfigEditorScreen(
-          initial: '',
-        ),
+        // Menampilkan Editor (Read-only karena tidak ada aksi simpan)
+        body: const ConfigEditorScreen(initial: '', isReadOnly: true),
       );
     }
 
@@ -680,9 +679,7 @@ class ProfileScreen extends StatelessWidget {
                     ),
                     title: Text(
                       desc.name,
-                      style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      ),
+                      style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
                     ),
                     subtitle: Text(desc.type.toUpperCase()),
                     trailing: Row(
@@ -719,11 +716,17 @@ class ProfileScreen extends StatelessWidget {
   }
 }
 
-// ======================= CONFIG EDITOR (DIKUNCI SAAT VPN OFF) =======================
+// ======================= CONFIG EDITOR =======================
 
 class ConfigEditorScreen extends StatefulWidget {
   final String initial;
-  const ConfigEditorScreen({super.key, required this.initial});
+  final bool isReadOnly;
+  
+  const ConfigEditorScreen({
+    super.key, 
+    required this.initial,
+    this.isReadOnly = false,
+  });
 
   @override
   State<ConfigEditorScreen> createState() => _ConfigEditorScreenState();
@@ -731,6 +734,10 @@ class ConfigEditorScreen extends StatefulWidget {
 
 class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
   late TextEditingController _controller;
+
+  static const String _trojanTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: trojan\npassword: passkamu\nsni: domain.com\nnetwork: ws\nws-opts:\n  path: /trojan\n  headers:\n    Host: domain.com';
+  static const String _vlessTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: vless\nuuid: isi-uuid-kamu\ntls: true\nsni: domain.com\nnetwork: ws\nws-opts:\n  path: /vless\n  headers:\n    Host: domain.com';
+  static const String _vmessTpl = 'name: Profil Baru\nserver: 1.2.3.4\nport: 443\ntype: vmess\nuuid: isi-uuid-kamu\ntls: true\nnetwork: ws\nws-opts:\n  path: /vmess\n  headers:\n    Host: domain.com';
 
   @override
   void initState() {
@@ -744,20 +751,91 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
     super.dispose();
   }
 
+  void _insertTemplate(String tpl) {
+    if (widget.isReadOnly) return;
+    final current = _controller.text.trim();
+    setState(() {
+      _controller.text = current.isEmpty ? tpl : '$current\n\n$tpl';
+    });
+  }
+
+  void _showTemplateDialog() {
+    if (widget.isReadOnly) return;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.security),
+              title: const Text('Template Trojan'),
+              onTap: () { Navigator.pop(ctx); _insertTemplate(_trojanTpl); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.shield),
+              title: const Text('Template VLESS'),
+              onTap: () { Navigator.pop(ctx); _insertTemplate(_vlessTpl); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cloud),
+              title: const Text('Template VMess'),
+              onTap: () { Navigator.pop(ctx); _insertTemplate(_vmessTpl); },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _save() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Config tidak boleh kosong')),
+      );
+      return;
+    }
+    Navigator.pop(context, text);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: TextField(
-        controller: _controller,
-        maxLines: null,
-        expands: true,
-        textAlignVertical: TextAlignVertical.top,
-        decoration: const InputDecoration(
-          border: OutlineInputBorder(),
-          hintText: 'Tempelkan link (vmess://, trojan://, dll) atau format YAML (server:, type:) di sini...',
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Config Editor'),
+        actions: [
+          if (!widget.isReadOnly)
+            IconButton(
+              icon: const Icon(Icons.library_add),
+              tooltip: 'Template',
+              onPressed: _showTemplateDialog,
+            ),
+          if (!widget.isReadOnly)
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _save,
+            ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: TextField(
+          controller: _controller,
+          readOnly: widget.isReadOnly,
+          maxLines: null,
+          expands: true,
+          textAlignVertical: TextAlignVertical.top,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+          decoration: InputDecoration(
+            border: const OutlineInputBorder(),
+            hintText: widget.isReadOnly 
+                ? 'Hubungkan VPN terlebih dahulu untuk mengedit'
+                : 'Tempelkan link (vmess://, trojan://, dll) atau format YAML (server:, type:) di sini...',
+            filled: widget.isReadOnly,
+            fillColor: widget.isReadOnly ? Colors.grey.withOpacity(0.1) : null,
+          ),
         ),
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
       ),
     );
   }
@@ -793,152 +871,6 @@ class SettingsScreen extends StatelessWidget {
             leading: const Icon(Icons.dark_mode),
             title: const Text('Gelap'),
             onTap: () => onThemeChanged(ThemeMode.dark),
-          ),
-        ],
-      ),
-    );
-  }
-}se();
-    super.dispose();
-  }
-
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  void _insertTemplate(String tpl) {
-    final current = _controller.text.trim();
-    setState(() {
-      _controller.text = current.isEmpty ? tpl : '$current\n$tpl';
-    });
-  }
-
-  void _showTemplates() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Tambah template', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            ListTile(
-              title: const Text('Trojan WS'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _insertTemplate(_trojanTpl);
-              },
-            ),
-            ListTile(
-              title: const Text('VLESS WS'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _insertTemplate(_vlessTpl);
-              },
-            ),
-            ListTile(
-              title: const Text('VMess WS'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _insertTemplate(_vmessTpl);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _save() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) {
-      _snack('Config masih kosong.');
-      return;
-    }
-    try {
-      ConfigParser.prepare(text);
-    } catch (e) {
-      _snack('Config tidak valid: $e');
-      return;
-    }
-    Navigator.pop(context, text);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Config Editor', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(icon: const Icon(Icons.add), tooltip: 'Template', onPressed: _showTemplates),
-          IconButton(icon: const Icon(Icons.save), tooltip: 'Simpan', onPressed: _save),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: TextField(
-          controller: _controller,
-          maxLines: null,
-          expands: true,
-          textAlignVertical: TextAlignVertical.top,
-          keyboardType: TextInputType.multiline,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 16),
-          decoration: const InputDecoration(
-            border: InputBorder.none,
-            hintText: 'Tempel link (vmess://, vless://, trojan://), YAML, atau JSON.\nTekan + untuk template.',
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ======================= SETTINGS =======================
-
-class SettingsScreen extends StatelessWidget {
-  final Function(ThemeMode) onThemeChanged;
-  const SettingsScreen({super.key, required this.onThemeChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        children: [
-          const Padding(padding: EdgeInsets.all(16.0), child: Text('Tampilan', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold))),
-          ListTile(
-            leading: const Icon(Icons.dark_mode),
-            title: const Text('Dark Mode'),
-            onTap: () => showDialog(
-              context: context,
-              builder: (ctx) => SimpleDialog(
-                title: const Text('Pilih Tema'),
-                children: [
-                  SimpleDialogOption(onPressed: () { onThemeChanged(ThemeMode.system); Navigator.pop(ctx); }, child: const Text('Ikuti Sistem')),
-                  SimpleDialogOption(onPressed: () { onThemeChanged(ThemeMode.light); Navigator.pop(ctx); }, child: const Text('Terang')),
-                  SimpleDialogOption(onPressed: () { onThemeChanged(ThemeMode.dark); Navigator.pop(ctx); }, child: const Text('Gelap')),
-                ],
-              ),
-            ),
-          ),
-          const Divider(),
-          const Padding(padding: EdgeInsets.all(16.0), child: Text('Izin', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold))),
-          ListTile(
-            leading: const Icon(Icons.notifications_active_outlined),
-            title: const Text('Izin notifikasi'),
-            subtitle: const Text('Buka pengaturan aplikasi Android'),
-            onTap: () => openAppSettings(),
-          ),
-          const Divider(),
-          const Padding(padding: EdgeInsets.all(16.0), child: Text('Tentang', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold))),
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('Versi Aplikasi'),
-            subtitle: Text('2.1.0 (Material 3)'),
           ),
         ],
       ),
