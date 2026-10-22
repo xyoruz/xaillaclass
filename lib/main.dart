@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Wajib ditambahkan untuk membaca Clipboard
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -210,6 +211,15 @@ ws-opts:
   path: $path
   headers:
     Host: $host''';
+      }
+
+      if (uri.scheme == 'ss') {
+        return '''name: Akun SS
+server: ${uri.host}
+port: ${uri.port}
+type: ss
+cipher: aes-256-gcm
+password: ${uri.userInfo}''';
       }
     } catch (e) {}
     return t;
@@ -802,7 +812,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   List<TextEditingController> _controllers = [];
   bool _isInitialized = false;
-  bool _isParsing = false;
 
   @override
   void initState() {
@@ -817,14 +826,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // JIKA KOSONG, BIARKAN KOSONG (TIDAK ADA TEMPLATE)
     if (widget.configs.isNotEmpty) {
       for (var config in widget.configs) {
-        final ctrl = TextEditingController(text: ConfigParser.toYaml(config));
-        ctrl.addListener(() => _onTextChanged(ctrl));
-        _controllers.add(ctrl);
+        _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
       }
     } else {
-      final ctrl = TextEditingController();
-      ctrl.addListener(() => _onTextChanged(ctrl));
-      _controllers.add(ctrl);
+      _controllers.add(TextEditingController());
     }
     _isInitialized = true;
   }
@@ -837,29 +842,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  void _addNewField() {
-    setState(() {
-      final ctrl = TextEditingController();
-      ctrl.addListener(() => _onTextChanged(ctrl));
-      _controllers.add(ctrl);
-    });
-  }
-
-  // FUNGSI BARU: Deteksi Paste Link & Ubah ke YAML Otomatis
-  void _onTextChanged(TextEditingController ctrl) {
-    if (_isParsing) return;
-    final text = ctrl.text.trim();
-    
-    if (text.startsWith('vmess://') || text.startsWith('trojan://') || text.startsWith('vless://')) {
-      _isParsing = true;
-      final yaml = ConfigParser.toYaml(text);
+  // FUNGSI BARU: BACA CLIPBOARD SAAT +
+  Future<void> _addNewField() async {
+    String initialText = '';
+    try {
+      // Ambil teks dari clipboard HP
+      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = clipboardData?.text?.trim() ?? '';
       
-      if (yaml != text) {
-        ctrl.text = yaml;
-        ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+      // Jika yang dicopy adalah link VPN, otomatis ubah ke YAML
+      if (text.startsWith('vmess://') || text.startsWith('trojan://') || text.startsWith('vless://') || text.startsWith('ss://')) {
+        initialText = ConfigParser.toYaml(text);
       }
-      _isParsing = false;
+    } catch (e) {
+      // Abaikan jika gagal baca clipboard
     }
+
+    setState(() {
+      _controllers.add(TextEditingController(text: initialText));
+    });
   }
 
   void _saveConfigs() {
@@ -986,7 +987,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.add, color: Colors.black),
-              onPressed: _addNewField,
+              onPressed: _addNewField, // Memanggil fungsi clipboard
             ),
             IconButton(
               icon: const Icon(Icons.save, color: Colors.black),
@@ -1007,7 +1008,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     controller: _controllers[index],
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
-                    // HAPUS HINT & TEMPLATE BAWAAN
                     decoration: const InputDecoration(
                       border: InputBorder.none,
                       isDense: true,
