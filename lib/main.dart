@@ -803,6 +803,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<TextEditingController> _controllers = [];
   bool _isInitialized = false;
 
+  // Template YAML default
+  static const String _defaultTemplate = '''name: Akun Baru
+server: 1.2.3.4
+port: 443
+type: trojan
+password: isi-password
+skip-cert-verify: true
+sni: domain.com
+network: ws
+ws-opts:
+  path: /trojan
+  headers:
+    Host: domain.com''';
+
   @override
   void initState() {
     super.initState();
@@ -818,7 +832,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
       }
     } else {
-      _controllers.add(TextEditingController());
+      // Langsung isi dengan template saat pertama dibuka
+      _controllers.add(TextEditingController(text: _defaultTemplate));
     }
     _isInitialized = true;
   }
@@ -833,7 +848,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _addNewField() {
     setState(() {
-      _controllers.add(TextEditingController());
+      // Tambah kolom baru yang langsung terisi template
+      _controllers.add(TextEditingController(text: _defaultTemplate));
     });
   }
 
@@ -918,7 +934,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               setState(() {
                 _controllers[index].dispose();
                 _controllers.removeAt(index);
-                if (_controllers.isEmpty) _controllers.add(TextEditingController());
+                if (_controllers.isEmpty) _controllers.add(TextEditingController(text: _defaultTemplate));
               });
             }),
           ],
@@ -982,12 +998,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     controller: _controllers[index],
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
+                    // Menghilangkan hint text
                     decoration: const InputDecoration(
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding: EdgeInsets.zero,
-                      hintText: 'Paste link atau ketik config di sini...\n(name: akun1, server: xxx, type: trojan)',
-                      hintStyle: TextStyle(color: Colors.grey),
                     ),
                     style: const TextStyle(
                       fontFamily: 'monospace', 
@@ -1019,7 +1034,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       body: Column(
         children: [
-          // Bagian @KENTANG_INJECTOR sudah dihapus dari sini
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: SingleChildScrollView(
