@@ -23,6 +23,10 @@ jobs:
           channel: 'stable'
           cache: true
           
+      # INI ADALAH BARIS AJAIB YANG MEMBUAT FOLDER ANDROID
+      - name: Generate missing Android files
+        run: flutter create . --project-name xaillaclass --org com.xailla
+          
       - name: Install Dependencies
         run: flutter pub get
         
