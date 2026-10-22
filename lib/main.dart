@@ -104,7 +104,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final FlutterV2ray _flutterV2ray = FlutterV2ray(
-    onStatusChanged: (status, duration, upload, download) {},
+    onStatusChanged: (status) {},
   );
   bool isConnected = false;
   String activeProfileName = "Belum ada profil dipilih";
