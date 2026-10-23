@@ -347,7 +347,6 @@ class _MainNavigatorState extends State<MainNavigator> {
       upSpeed = int.tryParse(status.uploadSpeed.toString()) ?? 0;
       if (!connected) pings = {};
     });
-    // Auto-ping dihapus. Ping hanya muncul jika tombol petir diklik.
   }
 
   Future<void> _init() async {
@@ -526,7 +525,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       applicationVersion: 'v2.0.0',
       applicationIcon: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: Image.asset('assets/logo.jpg', width: 40, height: 40, fit: BoxFit.cover),
+        child: Image.asset('assets/logo.jpg', width: 40, height: 40, fit: BoxFit.contain),
       ),
       children: [
         const Text('Aplikasi VPN ringan dan elegan untuk kebutuhan koneksi Anda.'),
@@ -552,7 +551,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 }
 
-// ======================= HOME SCREEN =======================
+// ======================= HOME SCREEN (DESAIN BARU) =======================
 
 class HomeScreen extends StatelessWidget {
   final bool isConnected;
@@ -582,60 +581,51 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? Colors.grey.shade900 : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black87;
-
     return Scaffold(
+      backgroundColor: const Color(0xFFFAFAFA), // Warna background sedikit abu-abu agar Card putih menonjol
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // LOGO & TEXT DISESUAIKAN DENGAN FOTO
               Row(
                 children: [
-                  // LOGO BARU DENGAN BOXFIT CONTAIN (ANTI BAYANGAN)
                   SizedBox(
-                    width: 50,
-                    height: 50,
+                    width: 60,
+                    height: 60,
                     child: Image.asset(
                       'assets/logo.jpg',
                       fit: BoxFit.contain,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Text(
+                  const SizedBox(width: 12),
+                  const Text(
                     'XAILLA CLASS',
                     style: TextStyle(
-                      fontSize: 24,
+                      fontSize: 26,
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5,
-                      color: textColor,
+                      letterSpacing: 1.0,
+                      color: Colors.black87,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 24),
 
+              // KARTU STATUS (ABU-ABU GELAP / HIJAU)
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                   decoration: BoxDecoration(
                     color: isConnected
                         ? Colors.green.shade600
-                        : (isDark ? Colors.grey.shade800 : Colors.grey.shade400),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: (isConnected ? Colors.green : Colors.grey).withOpacity(0.2),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      )
-                    ],
+                        : Colors.grey.shade500, // Warna abu-abu gelap seperti foto
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
                     children: [
@@ -650,8 +640,8 @@ class HomeScreen extends StatelessWidget {
                                   : (isConnected ? 'Connected' : 'Disconnected'),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -660,8 +650,8 @@ class HomeScreen extends StatelessWidget {
                                   ? '↓ ${_speed(downSpeed)} KB/s  |  ↑ ${_speed(upSpeed)} KB/s  |  $duration'
                                   : 'Tap to connect',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.9),
-                                fontSize: 13,
+                                color: Colors.white.withOpacity(0.95),
+                                fontSize: 14,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -680,41 +670,31 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
+              // MENU CARD (PUTIH DENGAN BAYANGAN HALUS)
               _menuCard(
                 context: context,
                 icon: Icons.edit_document,
-                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'Edit Config',
                 subtitle: 'Edit your config here',
                 onTap: onOpenConfig,
-                cardColor: cardColor,
-                textColor: textColor,
               ),
               const SizedBox(height: 12),
 
               _menuCard(
                 context: context,
                 icon: Icons.settings,
-                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'Settings',
                 subtitle: 'App preferences',
                 onTap: onOpenSettings,
-                cardColor: isDark ? Colors.grey.shade900 : Colors.transparent,
-                textColor: textColor,
-                isTransparent: true,
               ),
               const SizedBox(height: 12),
 
               _menuCard(
                 context: context,
                 icon: Icons.info_outline,
-                iconColor: isDark ? Colors.white : Colors.black87,
                 title: 'About',
                 subtitle: 'Version & information',
                 onTap: onOpenAbout,
-                cardColor: isDark ? Colors.grey.shade900 : Colors.transparent,
-                textColor: textColor,
-                isTransparent: true,
               ),
             ],
           ),
@@ -723,16 +703,13 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // Widget Menu Card Putih Bersih
   Widget _menuCard({
     required BuildContext context,
     required IconData icon,
-    required Color iconColor,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
-    required Color cardColor,
-    required Color textColor,
-    bool isTransparent = false,
   }) {
     return InkWell(
       onTap: onTap,
@@ -740,11 +717,11 @@ class HomeScreen extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isTransparent ? Colors.transparent : cardColor,
+          color: Colors.white, // Latar putih
           borderRadius: BorderRadius.circular(16),
-          boxShadow: isTransparent ? [] : [
+          boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withOpacity(0.04),
               blurRadius: 10,
               offset: const Offset(0, 4),
             )
@@ -752,7 +729,8 @@ class HomeScreen extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, color: iconColor, size: 28),
+            // Ikon dibuat hitam pekat dan agak besar
+            Icon(icon, color: Colors.black, size: 28),
             const SizedBox(width: 20),
             Expanded(
               child: Column(
@@ -760,24 +738,25 @@ class HomeScreen extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: TextStyle(
-                      fontSize: 16,
+                    style: const TextStyle(
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: textColor,
+                      color: Colors.black87,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 14,
                       color: Colors.grey.shade500,
                     ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: Colors.grey.shade400),
+            // Ikon panah kanan (Chevron)
+            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 28),
           ],
         ),
       ),
