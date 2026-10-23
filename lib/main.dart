@@ -525,7 +525,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       applicationVersion: 'v2.0.0',
       applicationIcon: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: Image.asset('assets/logo.jpg', width: 40, height: 40, fit: BoxFit.contain),
+        child: Image.asset('assets/logo.png', width: 40, height: 40, fit: BoxFit.contain),
       ),
       children: [
         const Text('Aplikasi VPN ringan dan elegan untuk kebutuhan koneksi Anda.'),
@@ -551,7 +551,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 }
 
-// ======================= HOME SCREEN (DESAIN BARU) =======================
+// ======================= HOME SCREEN =======================
 
 class HomeScreen extends StatelessWidget {
   final bool isConnected;
@@ -582,21 +582,21 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA), // Warna background sedikit abu-abu agar Card putih menonjol
+      backgroundColor: const Color(0xFFFAFAFA), 
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // LOGO & TEXT DISESUAIKAN DENGAN FOTO
+              // LOGO PNG TRANSPARAN (TANPA BAYANGAN / KOTAK)
               Row(
                 children: [
                   SizedBox(
                     width: 60,
                     height: 60,
                     child: Image.asset(
-                      'assets/logo.jpg',
+                      'assets/logo.png',
                       fit: BoxFit.contain,
                     ),
                   ),
@@ -614,7 +614,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
-              // KARTU STATUS (ABU-ABU GELAP / HIJAU)
+              // KARTU STATUS
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
@@ -624,7 +624,7 @@ class HomeScreen extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: isConnected
                         ? Colors.green.shade600
-                        : Colors.grey.shade500, // Warna abu-abu gelap seperti foto
+                        : Colors.grey.shade500,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
@@ -670,7 +670,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
-              // MENU CARD (PUTIH DENGAN BAYANGAN HALUS)
+              // MENU CARD
               _menuCard(
                 context: context,
                 icon: Icons.edit_document,
@@ -703,7 +703,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // Widget Menu Card Putih Bersih
   Widget _menuCard({
     required BuildContext context,
     required IconData icon,
@@ -717,7 +716,7 @@ class HomeScreen extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white, // Latar putih
+          color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
@@ -729,7 +728,6 @@ class HomeScreen extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Ikon dibuat hitam pekat dan agak besar
             Icon(icon, color: Colors.black, size: 28),
             const SizedBox(width: 20),
             Expanded(
@@ -755,7 +753,6 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-            // Ikon panah kanan (Chevron)
             Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 28),
           ],
         ),
