@@ -9,49 +9,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
-          
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
           cache: true
-          
+
       - name: Generate missing Android files
         run: flutter create . --project-name xaillaclass --org com.xailla
-          
+
       - name: Install Dependencies
         run: flutter pub get
 
-      # Perbaikan Manifest untuk Izin VPN & Notifikasi
-      - name: Patch AndroidManifest for VPN
+      - name: Patch AndroidManifest for VPN Permissions
         run: |
           FILE="android/app/src/main/AndroidManifest.xml"
-          # 1. Sisipkan izin sebelum tag <application>
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />' $FILE
-          
-          # 2. Sisipkan Service V2Ray sebelum tag </application>
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' $FILE
           sed -i '/<\/application>/i \        <service android:name="com.github.xdd666666.v2ray.V2RayService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">\n            <intent-filter>\n                <action android:name="android.net.VpnService"/>\n            </intent-filter>\n        </service>' $FILE
-          
-          # 3. Tampilkan isi manifest untuk memastikan berhasil (muncul di log GitHub Actions)
-          echo "--- Isi AndroidManifest.xml ---"
-          cat $FILE
 
-      - name: Set minSdkVersion 21
+      - name: Patch build.gradle for minSdk 21
         run: |
-          # Menggunakan grep dan sed yang lebih aman untuk build.gradle
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle
           sed -i 's/minSdkVersion 16/minSdkVersion 21/g' android/app/build.gradle
+          sed -i 's/minSdk flutter.minSdkVersion/minSdk 21/g' android/app/build.gradle
+          sed -i 's/minSdk 16/minSdk 21/g' android/app/build.gradle
 
-      - name: Build APK (ARM64)
-        run: flutter build apk --release --target-platform android-arm64
-        
+      - name: Build APK (ARM64, Obfuscated, Optimized)
+        run: flutter build apk --release --target-platform android-arm64 --obfuscate --split-debug-info=build/app/outputs/symbols
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
