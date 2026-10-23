@@ -13,6 +13,7 @@ dependencies:
   flutter_v2ray: ^1.0.10
   shared_preferences: ^2.2.2
   permission_handler: ^11.3.1
+  device_apps: ^2.2.0
 
 dev_dependencies:
   flutter_test:
