@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // =====================================================================
-//  XAILLA CLASS — VPN Client · v2.0.2
+//  XAILLA CLASS — VPN Client · v2.0.3
 //  Bug & fungsi diperbaiki, desain asli dipertahankan:
 //   1. Layar Proxy kini LIVE — status/ping/banner update real-time
 //      (dulu: nilai beku karena lewat route terpisah)
@@ -25,9 +25,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 //      banner berubah halus jadi "Berganti akun..." (tanpa SnackBar)
 //  12. Editor dibuka manual lewat ikon edit di AppBar; tidak ada lagi
 //      perpindahan layar otomatis yang terasa seperti pindah "tab"
+//  13. Banner "VPN Aktif" di layar Proxy DIHAPUS — tampilan lebih
+//      bersih; umpan balik ganti akun kini spinner kecil di kartu
+//      akun yang dipilih (memutus cukup dari layar Home)
 // =====================================================================
 
-const String appVersion = 'v2.0.2';
+const String appVersion = 'v2.0.3';
 
 void main() {
   runApp(const XaillaApp());
@@ -1637,25 +1640,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final displayed = _getDisplayedConfigs(d);
 
-    // ---- Status banner: satu sumber kebenaran untuk semua kondisi ----
-    final bool switching = d.isSwitching; // pindah akun
-    final bool connecting = d.isConnecting; // menyambungkan
-    final bool stopping = d.isDisconnecting; // memutuskan
-    final bool active =
-        d.isConnected && !switching && !connecting && !stopping;
-    final bool idle = !switching && !connecting && !stopping && !active;
-    final bool busyBanner = switching || connecting || stopping;
-    final Color bannerColor = busyBanner
-        ? Colors.orange.shade800
-        : (active ? Colors.purple.shade900 : Colors.blueGrey.shade600);
-    final String bannerText = switching
-        ? 'Berganti akun...'
-        : connecting
-            ? 'Menyambungkan...'
-            : stopping
-                ? 'Memutuskan...'
-                : (active ? 'VPN Aktif · ${d.duration}' : 'VPN Terputus');
-
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
@@ -1680,79 +1664,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       body: Column(
         children: [
-          // Banner status LIVE: Aktif / Menyambungkan / Berganti akun /
-          // Memutuskan / Terputus. Warna & teks bertransisi halus, dan
-          // ganti akun TIDAK memindahkan layar — cukup banner ini yang
-          // berubah, daftar tetap tenang di tempatnya.
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: bannerColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: busyBanner
-                      ? const SizedBox(
-                          key: ValueKey<String>('banner-busy'),
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Container(
-                          key: const ValueKey<String>('banner-dot'),
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: active ? Colors.greenAccent : Colors.white38,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Text(
-                      bannerText,
-                      key: ValueKey<String>(bannerText),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-                if (active)
-                  TextButton(
-                    onPressed: d.isBusy ? null : widget.onToggle,
-                    child: const Text(
-                      'Putuskan',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  )
-                else if (idle)
-                  TextButton(
-                    onPressed: d.isBusy ? null : widget.onToggle,
-                    child: const Text(
-                      'Sambungkan',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          // UX: banner "VPN Aktif" sengaja DIHAPUS agar tampilan bersih —
+          // status & tombol memutus cukup dari layar Home. Umpan balik
+          // saat ganti akun tampil sebagai spinner kecil di kartu akun.
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -1820,9 +1736,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               // FIX: ping kini chip berwarna dengan satuan ms
                               _pingChip(ping, isSelected),
                               if (isSelected)
-                                const Padding(
-                                  padding: EdgeInsets.only(left: 8.0),
-                                  child: Icon(Icons.check_circle, color: Colors.white, size: 20),
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8.0),
+                                  // Umpan balik halus saat menyambungkan /
+                                  // berganti akun: spinner kecil menggantikan
+                                  // centang di kartu akun yang dipilih.
+                                  child: (d.isSwitching || d.isConnecting)
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.4,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
                                 )
                               else
                                 const SizedBox(width: 28),
