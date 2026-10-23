@@ -340,7 +340,6 @@ class _MainNavigatorState extends State<MainNavigator> {
   void _onStatus(dynamic status) {
     if (!mounted) return;
     final connected = status.state.toString() == 'CONNECTED';
-    final was = isConnected;
     setState(() {
       isConnected = connected;
       duration = status.duration.toString();
@@ -348,7 +347,6 @@ class _MainNavigatorState extends State<MainNavigator> {
       upSpeed = int.tryParse(status.uploadSpeed.toString()) ?? 0;
       if (!connected) pings = {};
     });
-    if (connected && !was) _measurePings();
   }
 
   Future<void> _init() async {
@@ -601,13 +599,7 @@ class HomeScreen extends StatelessWidget {
                     height: 54,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        )
-                      ],
+                      // BoxShadow dihapus agar tidak ada bayangan/tepi hitam
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(14),
@@ -840,7 +832,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_isInitialized) return;
     _controllers = [];
     
-    // JIKA KOSONG, BIARKAN KOSONG
     if (widget.configs.isNotEmpty) {
       for (var config in widget.configs) {
         _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
@@ -859,7 +850,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  // FUNGSI BARU: BACA CLIPBOARD & AUTO-PARSE TANPA BUG
   Future<void> _addNewField() async {
     String initialText = '';
     try {
@@ -870,7 +860,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         try {
           initialText = ConfigParser.toYaml(text);
         } catch (e) {
-          initialText = text; // Fallback
+          initialText = text;
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Format link tidak valid, edit manual.')));
           }
