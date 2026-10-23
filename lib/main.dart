@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Wajib untuk Clipboard
+import 'package:flutter/services.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,6 +69,7 @@ class ConfigParser {
     final sni = f['sni'] ?? f['servername'] ?? f['host'] ?? server;
     final host = f['host'] ?? sni;
     final insecure = (f['skip-cert-verify'] ?? 'false').toLowerCase() == 'true';
+    final udp = (f['udp'] ?? 'false').toLowerCase() == 'true';
 
     if (server.isEmpty) throw const FormatException('server kosong');
 
@@ -81,6 +82,7 @@ class ConfigParser {
           'sni': sni,
           'type': network,
           'allowInsecure': insecure ? '1' : '0',
+          'udp': udp ? 'true' : 'false',
         };
         if (network == 'ws') {
           q['host'] = host;
@@ -96,6 +98,7 @@ class ConfigParser {
           'encryption': 'none',
           'security': tls ? 'tls' : 'none',
           'type': network,
+          'udp': udp ? 'true' : 'false',
         };
         if (tls) {
           q['sni'] = sni;
@@ -125,6 +128,7 @@ class ConfigParser {
           'path': network == 'ws' ? path : '',
           'tls': tls ? 'tls' : '',
           'sni': tls ? sni : '',
+          'udp': udp ? 'true' : 'false',
         };
         return 'vmess://${base64Encode(utf8.encode(jsonEncode(m)))}';
 
@@ -139,17 +143,10 @@ class ConfigParser {
 
     try {
       if (t.startsWith('vmess://')) {
-        // --- PERBAIKAN PARSING VMESS ---
-        String body = t.substring(8);
-        body = body.replaceAll(RegExp(r'\s+'), ''); // Hapus spasi/enter tak terlihat
+        String body = t.substring(8).replaceAll(RegExp(r'\s+'), '');
+        while (body.length % 4 != 0) { body += '='; }
         
-        // Tambahkan padding base64 jika kurang
-        while (body.length % 4 != 0) {
-          body += '=';
-        }
-        
-        final decoded = utf8.decode(base64.decode(base64.normalize(body)));
-        final m = jsonDecode(decoded);
+        final m = jsonDecode(utf8.decode(base64.decode(base64.normalize(body))));
         
         final name = m['ps'] ?? 'VMess';
         final server = m['add'] ?? '';
@@ -159,6 +156,7 @@ class ConfigParser {
         final tls = (m['tls'] ?? '').toString().isNotEmpty;
         final path = m['path'] ?? '/';
         final host = m['host'] ?? '';
+        final udp = (m['udp'] ?? 'false').toString() == 'true';
 
         return '''name: $name
 server: $server
@@ -167,6 +165,7 @@ type: vmess
 uuid: $uuid
 tls: ${tls ? 'true' : 'false'}
 network: $net
+udp: ${udp ? 'true' : 'false'}
 ws-opts:
   path: $path
   headers:
@@ -183,6 +182,7 @@ ws-opts:
         final net = uri.queryParameters['type'] ?? 'tcp';
         final path = uri.queryParameters['path'] ?? '/';
         final host = uri.queryParameters['host'] ?? sni;
+        final udp = (uri.queryParameters['udp'] ?? 'false') == 'true';
 
         return '''name: $name
 server: $server
@@ -192,6 +192,7 @@ password: $pass
 skip-cert-verify: true
 sni: $sni
 network: $net
+udp: ${udp ? 'true' : 'false'}
 ws-opts:
   path: $path
   headers:
@@ -208,6 +209,7 @@ ws-opts:
         final net = uri.queryParameters['type'] ?? 'tcp';
         final path = uri.queryParameters['path'] ?? '/';
         final host = uri.queryParameters['host'] ?? sni;
+        final udp = (uri.queryParameters['udp'] ?? 'false') == 'true';
 
         return '''name: $name
 server: $server
@@ -217,6 +219,7 @@ uuid: $uuid
 tls: ${tls ? 'true' : 'false'}
 sni: $sni
 network: $net
+udp: ${udp ? 'true' : 'false'}
 ws-opts:
   path: $path
   headers:
@@ -229,7 +232,8 @@ server: ${uri.host}
 port: ${uri.port}
 type: ss
 cipher: aes-256-gcm
-password: ${uri.userInfo}''';
+password: ${uri.userInfo}
+udp: true''';
       }
     } catch (e) {
       print("Gagal parse config: $e");
@@ -836,6 +840,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_isInitialized) return;
     _controllers = [];
     
+    // JIKA KOSONG, BIARKAN KOSONG
     if (widget.configs.isNotEmpty) {
       for (var config in widget.configs) {
         _controllers.add(TextEditingController(text: ConfigParser.toYaml(config)));
@@ -854,7 +859,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  // FUNGSI BARU: BACA CLIPBOARD & AUTO-PARSE DENGAN AMAN
+  // FUNGSI BARU: BACA CLIPBOARD & AUTO-PARSE TANPA BUG
   Future<void> _addNewField() async {
     String initialText = '';
     try {
@@ -865,9 +870,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         try {
           initialText = ConfigParser.toYaml(text);
         } catch (e) {
-          initialText = text; // Fallback jika parsing gagal
+          initialText = text; // Fallback
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Format link tidak valid, silakan edit manual.')));
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Format link tidak valid, edit manual.')));
           }
         }
       }
