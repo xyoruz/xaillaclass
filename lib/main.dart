@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // =====================================================================
-//  XAILLA CLASS — VPN Client · v2.0.3
+//  XAILLA CLASS — VPN Client · v2.0.4
 //  Bug & fungsi diperbaiki, desain asli dipertahankan:
 //   1. Layar Proxy kini LIVE — status/ping/banner update real-time
 //      (dulu: nilai beku karena lewat route terpisah)
@@ -28,9 +28,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 //  13. Banner "VPN Aktif" di layar Proxy DIHAPUS — tampilan lebih
 //      bersih; umpan balik ganti akun kini spinner kecil di kartu
 //      akun yang dipilih (memutus cukup dari layar Home)
+//  14. Tab sortir (Select/Best Ping/Fallback/Load Balance) kini
+//      TERSIMPAN permanen — tutup Proxy, buka lagi dari Home, bahkan
+//      restart aplikasi: tetap di tab terakhir. Hanya berubah bila
+//      pengguna sendiri menekan tab lain.
 // =====================================================================
 
-const String appVersion = 'v2.0.3';
+const String appVersion = 'v2.0.4';
 
 void main() {
   runApp(const XaillaApp());
@@ -1221,7 +1225,14 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  // Tab sortir aktif. v2.0.4: dipulihkan dari SharedPreferences agar
+  // tetap di tab terakhir walaupun layar Proxy ditutup lalu dibuka
+  // lagi dari Home (dulu selalu lompat balik ke "Select" karena layar
+  // ini adalah route yang dibuat ulang setiap kali dibuka).
   int _activeTab = 0;
+  // Guard: bila pengguna sudah menekan tab sebelum proses restore
+  // selesai, hasil restore TIDAK boleh menimpa pilihan pengguna.
+  bool _tabTouched = false;
 
   // UX: mode layar bersifat "sticky" — TIDAK lagi otomatis mengikuti
   // status VPN. Dulu: begitu VPN berhenti (mis. saat ganti akun),
@@ -1255,6 +1266,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // berubah sendiri setelah layar terbuka.
     final d0 = widget.data();
     _showListView = d0.isConnected || d0.isConnecting || d0.isBusy;
+    _restoreTab();
+  }
+
+  // FIX (v2.0.4): tab sortir selalu kembali ke "Select" karena layar
+  // Proxy adalah route yang dibuat ulang setiap dibuka dari Home.
+  // Kini tab terakhir tersimpan permanen dan HANYA berubah bila
+  // pengguna sendiri menekan tab lain.
+  Future<void> _restoreTab() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getInt('proxy_tab') ?? 0;
+      if (saved < 0 || saved >= _tabLabels.length) return;
+      if (!mounted || _tabTouched || _activeTab == saved) return;
+      setState(() => _activeTab = saved);
+    } catch (_) {}
+  }
+
+  Future<void> _persistTab(int i) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('proxy_tab', i);
+    } catch (_) {}
+  }
+
+  void _setTab(int i) {
+    _tabTouched = true;
+    if (_activeTab == i) return;
+    setState(() => _activeTab = i);
+    _persistTab(i);
   }
 
   void _initConfigs() {
@@ -1818,7 +1858,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final cs = Theme.of(context).colorScheme;
     final isActive = _activeTab == tabIndex;
     return GestureDetector(
-      onTap: () => setState(() => _activeTab = tabIndex),
+      onTap: () => _setTab(tabIndex),
       child: Container(
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
