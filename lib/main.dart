@@ -589,7 +589,6 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // LOGO PNG TRANSPARAN (TANPA BAYANGAN / KOTAK)
               Row(
                 children: [
                   SizedBox(
@@ -614,7 +613,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
-              // KARTU STATUS
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
@@ -670,7 +668,6 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
-              // MENU CARD
               _menuCard(
                 context: context,
                 icon: Icons.edit_document,
