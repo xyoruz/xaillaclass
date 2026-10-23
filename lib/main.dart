@@ -347,6 +347,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       upSpeed = int.tryParse(status.uploadSpeed.toString()) ?? 0;
       if (!connected) pings = {};
     });
+    // Auto-ping dihapus. Ping hanya muncul jika tombol petir diklik.
   }
 
   Future<void> _init() async {
@@ -594,19 +595,13 @@ class HomeScreen extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 54,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      // BoxShadow dihapus agar tidak ada bayangan/tepi hitam
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: Image.asset(
-                        'assets/logo.jpg',
-                        fit: BoxFit.cover,
-                      ),
+                  // LOGO BARU DENGAN BOXFIT CONTAIN (ANTI BAYANGAN)
+                  SizedBox(
+                    width: 50,
+                    height: 50,
+                    child: Image.asset(
+                      'assets/logo.jpg',
+                      fit: BoxFit.contain,
                     ),
                   ),
                   const SizedBox(width: 16),
