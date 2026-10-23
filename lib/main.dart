@@ -8,6 +8,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // =====================================================================
 //  XAILLA CLASS — VPN Client · v2.0.2
+//  Bug & fungsi diperbaiki, desain asli dipertahankan:
+//   1. Layar Proxy kini LIVE — status/ping/banner update real-time
+//      (dulu: nilai beku karena lewat route terpisah)
+//   2. Kecepatan/durasi tampil benar, tidak lagi selalu 0
+//   3. Status CONNECTING dikenali → tidak bisa dobel-connect
+//   4. Ganti akun saat terhubung: menunggu VPN benar-benar berhenti
+//   5. Ping jalan normal, hasil tersimpan + chip berwarna
+//   6. Simpan config atomik; pilihan akun tidak melompat ke terakhir
+//   7. Hapus dari list = benar-benar terhapus + putus VPN bila aktif
+//   8. Dark mode konsisten di semua layar + tema tersimpan permanen
+//   9. Parser: vmess url-safe base64, port default 443, SS legacy +
+//      SIP002, trojan skip-cert-verify mengikuti link, SS bisa connect
+//  10. Tab sort kini benar-benar beda fungsi + keterangan
+//  11. Ganti akun TANPA lompat layar — daftar Proxy tetap tampil,
+//      banner berubah halus jadi "Berganti akun..." (tanpa SnackBar)
+//  12. Editor dibuka manual lewat ikon edit di AppBar; tidak ada lagi
+//      perpindahan layar otomatis yang terasa seperti pindah "tab"
 // =====================================================================
 
 const String appVersion = 'v2.0.2';
@@ -56,6 +73,8 @@ class ConfigParser {
     return map;
   }
 
+  /// FIX: dekoder base64 yang tahan url-safe (- _) dan padding hilang.
+  /// base64.normalize() tidak mengubah - dan _ → vmess url-safe crash.
   static List<int> b64decode(String input) {
     var b = input.trim().replaceAll(RegExp(r'\s+'), '');
     b = b.replaceAll('-', '+').replaceAll('_', '/');
@@ -71,6 +90,8 @@ class ConfigParser {
         .join('&');
   }
 
+  /// Quote nilai agar aman untuk YAML sederhana milik aplikasi ini
+  /// (nama/password sering mengandung spasi, ':', '#', atau kutip).
   static String _y(dynamic v) {
     final s = v.toString();
     final needs = s.contains(':') ||
@@ -161,6 +182,8 @@ class ConfigParser {
         };
         return 'vmess://${base64Encode(utf8.encode(jsonEncode(m)))}';
 
+      // FIX: dulu tipe "ss" ditolak toLink → akun SS dari YAML tidak
+      // pernah bisa tersambung. Kini dibuat link format SIP002.
       case 'ss':
         final pass = f['password'] ?? '';
         final cipher = f['cipher'] ?? 'aes-256-gcm';
@@ -173,6 +196,8 @@ class ConfigParser {
     }
   }
 
+  // FIX: parsing link ss yang benar (legacy full-base64 + SIP002).
+  // Dulu cipher hardcode "aes-256-gcm" & password salah → SS mati total.
   static Map<String, String>? parseSS(String link) {
     try {
       var body = link.trim();
@@ -186,13 +211,17 @@ class ConfigParser {
       if (body.toLowerCase().startsWith('ss://')) body = body.substring(5);
       String userInfo, hostPort;
       if (body.contains('@')) {
+        // SIP002: ss://base64(cipher:pass)@host:port
         final at = body.lastIndexOf('@');
         userInfo = body.substring(0, at);
         hostPort = body.substring(at + 1);
         try {
           userInfo = utf8.decode(b64decode(userInfo));
-        } catch (_) {}
+        } catch (_) {
+          // userinfo plain (jarang) — biarkan apa adanya
+        }
       } else {
+        // Legacy: ss://base64(cipher:pass@host:port)
         final decoded = utf8.decode(b64decode(body));
         final at = decoded.lastIndexOf('@');
         if (at <= 0) return null;
@@ -206,6 +235,7 @@ class ConfigParser {
       String host;
       int? port;
       if (hostPort.startsWith('[')) {
+        // IPv6: [::1]:443
         final close = hostPort.indexOf(']');
         if (close < 0) return null;
         host = hostPort.substring(1, close);
@@ -242,6 +272,7 @@ class ConfigParser {
         final name = (m['ps'] ?? 'VMess').toString();
         final server = (m['add'] ?? '').toString();
         final rawPort = (m['port'] ?? 443).toString();
+        // FIX: port kosong/0 → 443 (dulu lolos & bikin config rusak)
         final port = (int.tryParse(rawPort) ?? 0) <= 0 ? '443' : rawPort;
         final uuid = (m['id'] ?? '').toString();
         final net = (m['net'] ?? 'tcp').toString();
@@ -266,6 +297,7 @@ ws-opts:
 
       final uri = Uri.tryParse(t);
       if (uri == null) return t;
+      // FIX: tanpa port, uri.port = 0 → config port 0 → gagal connect
       final port = uri.port == 0 ? 443 : uri.port;
 
       if (uri.scheme == 'trojan') {
@@ -276,6 +308,7 @@ ws-opts:
         final path = uri.queryParameters['path'] ?? '/';
         final host = uri.queryParameters['host'] ?? sni;
         final udp = (uri.queryParameters['udp'] ?? 'false') == 'true';
+        // FIX: dulu selalu true; kini mengikuti parameter link
         final insecure = (uri.queryParameters['allowInsecure'] ?? '0') == '1';
 
         return '''name: ${_y(name)}
@@ -298,6 +331,7 @@ ws-opts:
         final name = uri.fragment.isNotEmpty ? Uri.decodeComponent(uri.fragment) : 'VLESS';
         final sni = uri.queryParameters['sni'] ?? uri.host;
         final security = uri.queryParameters['security'] ?? 'none';
+        // FIX: security=reality juga butuh TLS (dulu dianggap none)
         final tls = security == 'tls' || security == 'reality';
         final net = uri.queryParameters['type'] ?? 'tcp';
         final path = uri.queryParameters['path'] ?? '/';
@@ -395,6 +429,7 @@ class _XaillaAppState extends State<XaillaApp> {
     _loadTheme();
   }
 
+  // FIX: tema kini tersimpan permanen (dulu hilang saat aplikasi dibuka ulang)
   Future<void> _loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
     final idx = prefs.getInt('theme_mode');
@@ -442,12 +477,18 @@ class MainNavigator extends StatefulWidget {
   State<MainNavigator> createState() => _MainNavigatorState();
 }
 
+/// Data segar untuk ProfileScreen. Layar itu berada di route terpisah,
+/// sehingga nilai biasa yang diberikan saat push TIDAK akan pernah
+/// ter-update (penyebab ping & status basi). Lewat getter + Listenable
+/// inilah layar Proxy menjadi live.
 class ProxyScreenData {
   final List<String> configs;
   final int selectedIndex;
   final bool isConnected;
   final bool isConnecting;
   final bool isBusy;
+  final bool isDisconnecting;
+  final bool isSwitching;
   final bool isRefreshingPing;
   final String duration;
   final Map<int, int> pings;
@@ -457,6 +498,8 @@ class ProxyScreenData {
     required this.isConnected,
     required this.isConnecting,
     required this.isBusy,
+    required this.isDisconnecting,
+    required this.isSwitching,
     required this.isRefreshingPing,
     required this.duration,
     required this.pings,
@@ -471,12 +514,15 @@ class _MainNavigatorState extends State<MainNavigator> {
   bool isConnected = false;
   bool isConnecting = false;
   bool isBusy = false;
+  bool isDisconnecting = false; // sedang memutus (tap Putuskan)
+  bool isSwitching = false; // sedang pindah akun saat VPN aktif
   bool isRefreshingPing = false;
   String duration = '00:00:00';
   int downSpeed = 0;
   int upSpeed = 0;
   Map<int, int> pings = {};
 
+  // Listener untuk route ProfileScreen agar ikut rebuild saat state berubah.
   final ChangeNotifier _proxyListeners = ChangeNotifier();
 
   @override
@@ -498,6 +544,8 @@ class _MainNavigatorState extends State<MainNavigator> {
     super.dispose();
   }
 
+  // FIX: deteksi status kini tahan terhadap format enum package dan
+  // mengenali CONNECTING (dulu diabaikan → tombol bisa dobel-connect).
   void _onStatus(dynamic status) {
     if (!mounted) return;
     final s = status.state.toString().toUpperCase();
@@ -510,9 +558,11 @@ class _MainNavigatorState extends State<MainNavigator> {
       duration = _fmtDuration(status.duration?.toString());
       downSpeed = _parseSpeed(status.downloadSpeed?.toString());
       upSpeed = _parseSpeed(status.uploadSpeed?.toString());
+      // FIX: ping tidak lagi dihapus saat VPN terputus — data tetap berguna.
     });
   }
 
+  // FIX: dulu int.tryParse → selalu 0 kalau package mengirim angka terformat.
   static int _parseSpeed(String? raw) {
     if (raw == null) return 0;
     var s = raw.toUpperCase().replaceAll(',', '').trim();
@@ -570,6 +620,9 @@ class _MainNavigatorState extends State<MainNavigator> {
     await prefs.setInt('selected_index', selectedIndex);
   }
 
+  // FIX: simpan massal dari editor kini ATOMIK. Dulu delete-all + add
+  // = dua tulis SharedPreferences berlomba & pilihan melompat ke akun
+  // terakhir. Kini pilihan dipertahankan berdasarkan isi akun.
   void _replaceConfigs(List<String> newConfigs) {
     setState(() {
       final oldSel = (selectedIndex >= 0 && selectedIndex < savedConfigs.length)
@@ -596,6 +649,7 @@ class _MainNavigatorState extends State<MainNavigator> {
 
   Future<void> _deleteConfig(int index) async {
     if (index == -1) {
+      // Hapus semua
       if (isConnected || isConnecting) {
         try {
           await _v2ray.stopV2Ray();
@@ -614,6 +668,7 @@ class _MainNavigatorState extends State<MainNavigator> {
     } else {
       if (index < 0 || index >= savedConfigs.length) return;
       final deletingActive = index == selectedIndex;
+      // FIX: hapus akun yang sedang dipakai → VPN diputus dulu
       if (deletingActive && (isConnected || isConnecting)) {
         try {
           await _v2ray.stopV2Ray();
@@ -621,6 +676,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       }
       setState(() {
         savedConfigs = List<String>.from(savedConfigs)..removeAt(index);
+        // Geser kunci ping agar hasil tetap sejajar dengan daftar baru
         final old = Map<int, int>.from(pings);
         final shifted = <int, int>{};
         old.forEach((k, v) {
@@ -643,24 +699,30 @@ class _MainNavigatorState extends State<MainNavigator> {
     _savePrefs();
   }
 
-  // FIX: Fungsi pindah akun dihaluskan (tanpa jeda loop 4 detik)
   Future<void> _select(int index) async {
     if (isBusy || index < 0 || index >= savedConfigs.length) return;
     if (index == selectedIndex && (isConnected || isConnecting)) return;
-    
-    setState(() {
-      selectedIndex = index;
-      isBusy = true; 
-    });
+    setState(() => selectedIndex = index);
     _savePrefs();
 
     if (isConnected || isConnecting) {
-      _snack('Mengganti akun...');
+      // UX: TANPA SnackBar & TANPA pindah layar. Banner di layar Proxy
+      // menampilkan "Berganti akun..." secara inline dan halus, sehingga
+      // pengguna tetap di daftar — tidak ada lagi jeda lompat "tab".
+      setState(() {
+        isBusy = true;
+        isSwitching = true;
+      });
       try {
-        await _v2ray.stopV2Ray();
-        // Beri jeda kecil saja agar OS bisa menutup service lama
-        await Future.delayed(const Duration(milliseconds: 500));
-        
+        try {
+          await _v2ray.stopV2Ray();
+        } catch (_) {}
+        // Tunggu VPN benar-benar berhenti (maks 4 detik).
+        for (int i = 0;
+            i < 40 && mounted && (isConnected || isConnecting);
+            i++) {
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
         final p = ConfigParser.prepare(savedConfigs[index]);
         if (await _v2ray.requestPermission()) {
           _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
@@ -670,21 +732,33 @@ class _MainNavigatorState extends State<MainNavigator> {
       } catch (e) {
         _snack('Gagal berganti akun: $e');
       } finally {
-        if (mounted) setState(() => isBusy = false);
+        if (mounted) {
+          setState(() {
+            isBusy = false;
+            isSwitching = false;
+          });
+        }
       }
-    } else {
-      if (mounted) setState(() => isBusy = false);
     }
   }
 
   Future<void> _toggleConnection() async {
+    // FIX: guard isConnecting → tidak bisa dobel-connect saat menyambung
     if (isBusy || isConnecting) return;
     if (isConnected) {
-      setState(() => isBusy = true);
+      setState(() {
+        isBusy = true;
+        isDisconnecting = true;
+      });
       try {
         await _v2ray.stopV2Ray();
       } catch (_) {} finally {
-        if (mounted) setState(() => isBusy = false);
+        if (mounted) {
+          setState(() {
+            isBusy = false;
+            isDisconnecting = false;
+          });
+        }
       }
       return;
     }
@@ -694,6 +768,8 @@ class _MainNavigatorState extends State<MainNavigator> {
     }
     setState(() => isBusy = true);
     try {
+      // FIX: int.clamp() mengembalikan num → tidak bisa dipakai sebagai
+      // index list (error compile di versi lama). Kini penjajaran manual.
       int idx = selectedIndex;
       if (idx >= savedConfigs.length) idx = savedConfigs.length - 1;
       if (idx < 0) idx = 0;
@@ -713,6 +789,9 @@ class _MainNavigatorState extends State<MainNavigator> {
     }
   }
 
+  // FIX: ping kini jalan kapan pun (dulu loop langsung batal kalau VPN
+  // belum terhubung), hasil tersimpan di peta pings, dan muncul info
+  // kalau semua server gagal.
   Future<void> _measurePings() async {
     if (isRefreshingPing) return;
     if (savedConfigs.isEmpty) {
@@ -759,6 +838,7 @@ class _MainNavigatorState extends State<MainNavigator> {
     Navigator.push(
       context,
       MaterialPageRoute(
+        // FIX: data dikirim lewat getter + Listenable → layar Proxy live
         builder: (context) => ProfileScreen(
           data: () => ProxyScreenData(
             configs: savedConfigs,
@@ -766,6 +846,8 @@ class _MainNavigatorState extends State<MainNavigator> {
             isConnected: isConnected,
             isConnecting: isConnecting,
             isBusy: isBusy,
+            isDisconnecting: isDisconnecting,
+            isSwitching: isSwitching,
             isRefreshingPing: isRefreshingPing,
             duration: duration,
             pings: Map<int, int>.from(pings),
@@ -805,6 +887,7 @@ class _MainNavigatorState extends State<MainNavigator> {
           width: 40,
           height: 40,
           fit: BoxFit.contain,
+          // FIX: fallback ikon bila aset logo hilang (dulu bisa crash)
           errorBuilder: (_, __, ___) => const Icon(Icons.vpn_key_rounded, size: 32),
         ),
       ),
@@ -864,6 +947,7 @@ class HomeScreen extends StatelessWidget {
     required this.onOpenAbout,
   });
 
+  // FIX: dulu (bytes/1024) apa adanya → kecepatan MB tampil "ribuan KB".
   String _fmtSpeed(int bytes) {
     if (bytes <= 0) return '0 KB/s';
     if (bytes < 1024) return '$bytes B/s';
@@ -899,12 +983,14 @@ class HomeScreen extends StatelessWidget {
             children: [
               Row(
                 children: [
+                  // LOGO BOXFIT CONTAIN (ANTI BAYANGAN) — dipertahankan
                   SizedBox(
                     width: 60,
                     height: 60,
                     child: Image.asset(
                       'assets/logo.png',
                       fit: BoxFit.contain,
+                      // FIX: fallback ikon bila aset hilang (dulu red error)
                       errorBuilder: (_, __, ___) => const Icon(
                         Icons.vpn_key_rounded,
                         size: 40,
@@ -927,6 +1013,7 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 24),
 
               GestureDetector(
+                // FIX: tap diabaikan saat sedang menyambung/memutus
                 onTap: working ? null : onToggle,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
@@ -969,6 +1056,7 @@ class HomeScreen extends StatelessWidget {
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
+                            // FIX: tampilkan akun yang sedang dipakai
                             if (isConnected && selectedName.isNotEmpty) ...[
                               const SizedBox(height: 2),
                               Text(
@@ -1132,6 +1220,18 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   int _activeTab = 0;
 
+  // UX: mode layar bersifat "sticky" — TIDAK lagi otomatis mengikuti
+  // status VPN. Dulu: begitu VPN berhenti (mis. saat ganti akun),
+  // layar melompat ke Config Editor lalu kembali lagi ke daftar →
+  // terasa seperti pindah "tab" yang mengganggu. Kini: sekali di
+  // daftar Proxy, tetap di sini sampai pengguna sendiri menekan ikon
+  // edit (ke editor) atau back (ke Home).
+  bool _showListView = false;
+  bool _editorFromList = false;
+
+  // FIX: tiap tab kini punya fungsi sortir yang benar-benar BERBEDA
+  // (dulu Best Ping & Fallback sama persis, Load Balance = urut nama
+  // tanpa keterangan apa pun).
   static const List<String> _tabLabels = ['Select', 'Best Ping', 'Fallback', 'Load Balance'];
   static const List<String> _tabCaptions = [
     'Urutan manual — pilih akun sesukamu.',
@@ -1147,6 +1247,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _initConfigs();
+    // Mode awal: daftar Proxy bila VPN sedang aktif/menyambung/beralih,
+    // editor bila idle — sama seperti desain lama, tapi mode ini TIDAK
+    // berubah sendiri setelah layar terbuka.
+    final d0 = widget.data();
+    _showListView = d0.isConnected || d0.isConnecting || d0.isBusy;
   }
 
   void _initConfigs() {
@@ -1164,6 +1269,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _isInitialized = true;
   }
 
+  // Bangun ulang buffer editor dari config tersimpan (dipakai setelah
+  // simpan saat editor dibuka dari daftar Proxy).
+  void _rebuildControllersFromData() {
+    final old = List<TextEditingController>.from(_controllers);
+    final configs = widget.data().configs;
+    _controllers = configs.isNotEmpty
+        ? [
+            for (final c in configs)
+              TextEditingController(text: ConfigParser.toYaml(c)),
+          ]
+        : <TextEditingController>[TextEditingController()];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final c in old) {
+        c.dispose();
+      }
+    });
+  }
+
+  // ---- Pindah mode manual: daftar Proxy <-> Config Editor ----
+  void _openEditor() {
+    setState(() {
+      _editorFromList = true;
+      _showListView = false;
+    });
+  }
+
+  void _closeEditor() {
+    if (_editorFromList) {
+      // Dibuka dari daftar Proxy → kembali ke daftar, bukan ke Home.
+      setState(() {
+        _showListView = true;
+        _editorFromList = false;
+      });
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
   @override
   void dispose() {
     for (var ctrl in _controllers) {
@@ -1172,6 +1315,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
+  // FIX: clipboard YAML/JSON kini ikut terdeteksi (dulu hanya link://)
   Future<void> _addNewField() async {
     String initialText = '';
     try {
@@ -1287,13 +1431,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
 
+    // FIX: satu operasi atomik (dulu delete-all + add berlomba menulis
+    // prefs & pilihan melompat ke akun terakhir)
     widget.onReplace(validConfigs);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Config berhasil disimpan')),
     );
-    Navigator.pop(context);
+    if (_editorFromList) {
+      // Kembali ke daftar Proxy (bukan keluar ke Home) & sinkronkan
+      // buffer editor dengan hasil simpanan terbaru.
+      _rebuildControllersFromData();
+      setState(() {
+        _showListView = true;
+        _editorFromList = false;
+      });
+    } else {
+      Navigator.pop(context);
+    }
   }
 
+  // Hapus dari buffer EDITOR (permanen setelah tombol save ditekan)
   void _showMenu(BuildContext context, int index) {
     showModalBottomSheet<void>(
       context: context,
@@ -1307,6 +1464,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: () {
                 Navigator.pop(ctx);
                 if (index < 0 || index >= _controllers.length) return;
+                // FIX: dispose dilakukan setelah frame agar tidak crash
                 final removed = _controllers.removeAt(index);
                 if (_controllers.isEmpty) _controllers.add(TextEditingController());
                 setState(() {});
@@ -1319,6 +1477,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // FIX: hapus di mode LIST kini menghapus akun SUNGGUHAN + konfirmasi.
+  // Dulu hanya menghapus buffer editor — akun muncul lagi setelah disimpan.
   void _confirmDeleteAccount(BuildContext context, int index, String name) {
     showDialog<void>(
       context: context,
@@ -1330,6 +1490,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
+              // sinkronkan buffer editor agar tidak "hidup lagi" saat disimpan
               if (index < _controllers.length) {
                 final removed = _controllers.removeAt(index);
                 WidgetsBinding.instance.addPostFrameCallback((_) => removed.dispose());
@@ -1348,16 +1509,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     int pingOf(int key) {
       final p = d.pings[key];
-      if (p == null) return 99999;
-      return p < 0 ? 100000 : p;
+      if (p == null) return 99999; // belum di-ping → paling bawah
+      return p < 0 ? 100000 : p; // timeout → di bawah yang belum di-ping
     }
 
     if (_activeTab == 1) {
+      // Best Ping: tercepat dulu
       list.sort((a, b) {
         final r = pingOf(a.key) - pingOf(b.key);
         return r != 0 ? r : a.key.compareTo(b.key);
       });
     } else if (_activeTab == 2) {
+      // Fallback: yang bermasalah dulu, sisanya ping tercepat dulu
       list.sort((a, b) {
         final failA = (d.pings[a.key] ?? 1) == -1 ? 0 : 1;
         final failB = (d.pings[b.key] ?? 1) == -1 ? 0 : 1;
@@ -1366,6 +1529,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return r != 0 ? r : a.key.compareTo(b.key);
       });
     } else if (_activeTab == 3) {
+      // Load Balance: urut nama A-Z
       list.sort((a, b) {
         final nameA = ConfigParser.describe(a.value).name.toLowerCase();
         final nameB = ConfigParser.describe(b.value).name.toLowerCase();
@@ -1388,12 +1552,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildScreen(BuildContext context, ProxyScreenData d) {
-    final showList = d.isConnected || d.isConnecting;
-    if (!showList) return _buildEditor(context);
-    return _buildProxyList(context, d);
+    // Mode layar kini STICKY — tidak lagi berganti otomatis mengikuti
+    // status VPN. Dulu: begitu VPN berhenti saat ganti akun, layar
+    // melompat ke editor lalu balik lagi ke daftar (terasa seperti
+    // pindah "tab"). Kini transisi antar-mode pakai fade halus dan
+    // hanya bergerak kalau pengguna yang memutuskan.
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: KeyedSubtree(
+        key: ValueKey<bool>(_showListView),
+        child: _showListView
+            ? _buildProxyList(context, d)
+            : _buildEditor(context),
+      ),
+    );
   }
 
+  // ------------------------- MODE EDITOR -------------------------
+
   Widget _buildEditor(BuildContext context) {
+    // FIX: warna kini mengikuti tema (dulu hardcode putih → dark mode rusak)
     final cs = Theme.of(context).colorScheme;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
 
@@ -1405,7 +1585,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         foregroundColor: cs.onSurface,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: _closeEditor,
         ),
         title: Text(
           'Config Editor',
@@ -1449,11 +1629,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ------------------------ MODE LIST PROXY ------------------------
+
   Widget _buildProxyList(BuildContext context, ProxyScreenData d) {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final displayed = _getDisplayedConfigs(d);
+
+    // ---- Status banner: satu sumber kebenaran untuk semua kondisi ----
+    final bool switching = d.isSwitching; // pindah akun
+    final bool connecting = d.isConnecting; // menyambungkan
+    final bool stopping = d.isDisconnecting; // memutuskan
+    final bool active =
+        d.isConnected && !switching && !connecting && !stopping;
+    final bool idle = !switching && !connecting && !stopping && !active;
+    final bool busyBanner = switching || connecting || stopping;
+    final Color bannerColor = busyBanner
+        ? Colors.orange.shade800
+        : (active ? Colors.purple.shade900 : Colors.blueGrey.shade600);
+    final String bannerText = switching
+        ? 'Berganti akun...'
+        : connecting
+            ? 'Menyambungkan...'
+            : stopping
+                ? 'Memutuskan...'
+                : (active ? 'VPN Aktif · ${d.duration}' : 'VPN Terputus');
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -1469,11 +1670,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
           'Proxy',
           style: TextStyle(fontWeight: FontWeight.bold, color: cs.onSurface),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Edit Config',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: _openEditor,
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // Bagian Banner Status (VPN Aktif) sudah dihapus sesuai permintaan
-          
+          // Banner status LIVE: Aktif / Menyambungkan / Berganti akun /
+          // Memutuskan / Terputus. Warna & teks bertransisi halus, dan
+          // ganti akun TIDAK memindahkan layar — cukup banner ini yang
+          // berubah, daftar tetap tenang di tempatnya.
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: bannerColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: busyBanner
+                      ? const SizedBox(
+                          key: ValueKey<String>('banner-busy'),
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Container(
+                          key: const ValueKey<String>('banner-dot'),
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: active ? Colors.greenAccent : Colors.white38,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Text(
+                      bannerText,
+                      key: ValueKey<String>(bannerText),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+                if (active)
+                  TextButton(
+                    onPressed: d.isBusy ? null : widget.onToggle,
+                    child: const Text(
+                      'Putuskan',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  )
+                else if (idle)
+                  TextButton(
+                    onPressed: d.isBusy ? null : widget.onToggle,
+                    child: const Text(
+                      'Sambungkan',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: SingleChildScrollView(
@@ -1483,6 +1760,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ),
+          // FIX: keterangan fungsi tab yang sedang aktif
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
             child: Align(
@@ -1539,6 +1817,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // FIX: ping kini chip berwarna dengan satuan ms
                               _pingChip(ping, isSelected),
                               if (isSelected)
                                 const Padding(
@@ -1650,6 +1929,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _mode = widget.currentMode;
   }
 
+  // FIX: pilihan tema kini disimpan permanen via onThemeChanged → prefs
   void _pick(ThemeMode mode) {
     setState(() => _mode = mode);
     widget.onThemeChanged(mode);
