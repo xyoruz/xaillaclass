@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:device_apps/device_apps.dart';
 
 // =====================================================================
-//  XAILLA CLASS — VPN Client · v2.0.4
+//  XAILLA CLASS — VPN Client · v2.2.0
 //  Bug & fungsi diperbaiki, desain asli dipertahankan:
 //   1. Layar Proxy kini LIVE — status/ping/banner update real-time
 //      (dulu: nilai beku karena lewat route terpisah)
@@ -32,9 +34,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 //      TERSIMPAN permanen — tutup Proxy, buka lagi dari Home, bahkan
 //      restart aplikasi: tetap di tab terakhir. Hanya berubah bila
 //      pengguna sendiri menekan tab lain.
+//  15. Layar Settings RINGKAS — menu tidak lagi besar: baris padat,
+//      ikon kecil, dropdown pilihan gaya aplikasi referensi.
+//  16. FITUR BARU: Dark Mode 3 opsi (Follow System / Always Light /
+//      Always Dark) + section VpnService Options (Root Tethering
+//      nonaktif — butuh root) + Access Control Mode (Allow all /
+//      Allow selected / Deny selected).
+//  17. FITUR BARU: halaman Access Control Packages — daftar semua
+//      aplikasi + cari + Select All/None/Invert + filter System Apps
+//      + sortir Name/Package/Install/Update (+ Reverse) + impor/
+//      ekspor clipboard. Tersimpan permanen & otomatis dipakai saat
+//      VPN tersambung (plugin flutter_v2ray: parameter blockedApps).
+//
+//  18. Settings disamakan dengan foto referensi: judul "App", section
+//      Interface & VpnService Options, Dark Mode dan Access Control Mode
+//      kini dropdown popup (opsi terpilih berlatar ungu), Root Tethering
+//      nonaktif. Halaman Access Control Packages: ikon Search di AppBar,
+//      menu titik tiga dengan submenu Filter / Sort / External, ikon
+//      aplikasi di daftar, kotak centang di kanan.
+//  19. FIX COMPILE: properti device_apps yang benar adalah
+//      installTimeMillis / updateTimeMillis (dulu installTime/updateTime).
+//      Hasil gagal-muat daftar aplikasi tidak lagi di-cache.
+//
+//  CATATAN BUILD (WAJIB untuk fitur Access Control):
+//   1) flutter pub add device_apps
+//   2) Tambahkan di android/app/src/main/AndroidManifest.xml:
+//      <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
 // =====================================================================
 
-const String appVersion = 'v2.0.4';
+const String appVersion = 'v2.2.0';
 
 void main() {
   runApp(const XaillaApp());
@@ -474,6 +502,73 @@ class _XaillaAppState extends State<XaillaApp> {
   }
 }
 
+// ======================= INVENTARIS APLIKASI =======================
+
+/// Info ringkas satu aplikasi terpasang (untuk Access Control).
+/// Sengaja BUKAN tipe `Application` milik device_apps supaya UI
+/// tidak bergantung langsung pada tipe package.
+class VpnAppInfo {
+  final String name;
+  final String packageName;
+  final bool systemApp;
+  final int installTime;
+  final int updateTime;
+  final Uint8List? icon;
+  const VpnAppInfo({
+    required this.name,
+    required this.packageName,
+    required this.systemApp,
+    required this.installTime,
+    required this.updateTime,
+    this.icon,
+  });
+}
+
+/// Memuat daftar aplikasi terpasang lalu di-cache sepanjang sesi.
+/// Dua mode: tanpa ikon (ringan, dipakai saat VPN menyambung) dan
+/// dengan ikon (dipakai halaman Access Control Packages).
+class AppInventory {
+  static List<VpnAppInfo>? _cache;
+  static bool _cacheHasIcons = false;
+
+  static Future<List<VpnAppInfo>> load({bool withIcons = false}) async {
+    final cached = _cache;
+    if (cached != null && (!withIcons || _cacheHasIcons)) return cached;
+    List<VpnAppInfo> result = [];
+    try {
+      final apps = await DeviceApps.getInstalledApplications(
+        includeSystemApps: true,
+        includeAppIcons: withIcons,
+        onlyAppsWithLaunchIntent: false,
+      );
+      result = [
+        for (final a in apps)
+          VpnAppInfo(
+            name: a.appName.isEmpty ? a.packageName : a.appName,
+            packageName: a.packageName,
+            systemApp: a.systemApp,
+            // FIX: nama properti device_apps adalah installTimeMillis /
+            // updateTimeMillis (dulu installTime/updateTime → error compile).
+            installTime: a.installTimeMillis,
+            updateTime: a.updateTimeMillis,
+            icon: a is ApplicationWithIcon ? a.icon : null,
+          ),
+      ];
+      result.sort(
+          (x, y) => x.name.toLowerCase().compareTo(y.name.toLowerCase()));
+    } catch (_) {
+      // Gagal memuat (mis. permission QUERY_ALL_PACKAGES belum ada).
+      result = [];
+    }
+    // FIX: hasil kosong (gagal) tidak lagi di-cache → bisa dicoba ulang.
+    if (result.isNotEmpty) {
+      _cache = result;
+      _cacheHasIcons = withIcons;
+    }
+    return result;
+  }
+}
+
 // ======================= MAIN NAVIGATOR =======================
 
 class MainNavigator extends StatefulWidget {
@@ -528,6 +623,11 @@ class _MainNavigatorState extends State<MainNavigator> {
   int downSpeed = 0;
   int upSpeed = 0;
   Map<int, int> pings = {};
+
+  // Access Control (fitur v2.1.0, sesuai foto referensi):
+  // 0 = Allow all apps, 1 = Allow selected apps, 2 = Deny selected apps.
+  int accessMode = 0;
+  List<String> accessPackages = [];
 
   // Listener untuk route ProfileScreen agar ikut rebuild saat state berubah.
   final ChangeNotifier _proxyListeners = ChangeNotifier();
@@ -606,6 +706,9 @@ class _MainNavigatorState extends State<MainNavigator> {
       savedConfigs = prefs.getStringList('vpn_configs') ?? [];
       selectedIndex = prefs.getInt('selected_index') ?? 0;
       if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
+      accessMode = prefs.getInt('access_mode') ?? 0;
+      if (accessMode < 0 || accessMode > 2) accessMode = 0;
+      accessPackages = prefs.getStringList('access_packages') ?? [];
     });
 
     if (!(prefs.getBool('perm_asked') ?? false)) {
@@ -625,6 +728,36 @@ class _MainNavigatorState extends State<MainNavigator> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('vpn_configs', savedConfigs);
     await prefs.setInt('selected_index', selectedIndex);
+    await prefs.setInt('access_mode', accessMode);
+    await prefs.setStringList('access_packages', accessPackages);
+  }
+
+  // Access Control → daftar blockedApps untuk plugin flutter_v2ray.
+  // Mode 0 (Allow all): tidak ada yang diblokir.
+  // Mode 1 (Allow selected / whitelist): blokir SEMUA yang TIDAK
+  //   dipilih — plugin hanya punya blockedApps (deny list), jadi
+  //   whitelist dihitung sebagai kebalikannya.
+  // Mode 2 (Deny selected / blacklist): blokir yang dipilih saja.
+  // Guard: mode 1 dengan pilihan KOSONG → dianggap Allow all, supaya
+  //   koneksi tidak mati total karena memblokir seluruh aplikasi.
+  Future<List<String>> _computeBlockedApps() async {
+    if (accessMode == 0 || accessPackages.isEmpty) return const [];
+    if (accessMode == 2) return List<String>.from(accessPackages);
+    final all = await AppInventory.load();
+    if (all.isEmpty) return const [];
+    final selected = accessPackages.toSet();
+    return [
+      for (final a in all)
+        if (!selected.contains(a.packageName)) a.packageName
+    ];
+  }
+
+  void _updateAccessControl(int mode, List<String> packages) {
+    setState(() {
+      accessMode = mode;
+      accessPackages = List<String>.from(packages);
+    });
+    _savePrefs();
   }
 
   // FIX: simpan massal dari editor kini ATOMIK. Dulu delete-all + add
@@ -731,8 +864,14 @@ class _MainNavigatorState extends State<MainNavigator> {
           await Future.delayed(const Duration(milliseconds: 100));
         }
         final p = ConfigParser.prepare(savedConfigs[index]);
+        final blocked = await _computeBlockedApps();
         if (await _v2ray.requestPermission()) {
-          _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
+          _v2ray.startV2Ray(
+            remark: p.remark,
+            config: p.config,
+            blockedApps: blocked,
+            proxyOnly: false,
+          );
         } else {
           _snack('Izin VPN ditolak.');
         }
@@ -784,8 +923,14 @@ class _MainNavigatorState extends State<MainNavigator> {
         setState(() => selectedIndex = idx);
       }
       final p = ConfigParser.prepare(savedConfigs[idx]);
+      final blocked = await _computeBlockedApps();
       if (await _v2ray.requestPermission()) {
-        _v2ray.startV2Ray(remark: p.remark, config: p.config, proxyOnly: false);
+        _v2ray.startV2Ray(
+          remark: p.remark,
+          config: p.config,
+          blockedApps: blocked,
+          proxyOnly: false,
+        );
       } else {
         _snack('Izin VPN ditolak.');
       }
@@ -877,6 +1022,9 @@ class _MainNavigatorState extends State<MainNavigator> {
         builder: (context) => SettingsScreen(
           currentMode: widget.themeMode,
           onThemeChanged: widget.onThemeChanged,
+          accessMode: accessMode,
+          accessPackages: List<String>.from(accessPackages),
+          onAccessChanged: _updateAccessControl,
         ),
       ),
     );
@@ -1149,24 +1297,26 @@ class HomeScreen extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        // v2.1.0: menu diringkas — dulu terlalu besar (ikon 28, judul 18,
+        // padding 16). Kini padat seperti menu aplikasi referensi.
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
           color: isTransparent ? Colors.transparent : cardColor,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: isTransparent
               ? []
               : [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.04),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   )
                 ],
         ),
         child: Row(
           children: [
-            Icon(icon, color: iconColor, size: 28),
-            const SizedBox(width: 20),
+            Icon(icon, color: iconColor, size: 22),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1174,23 +1324,23 @@ class HomeScreen extends StatelessWidget {
                   Text(
                     title,
                     style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
                       color: textColor,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     subtitle,
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 12,
                       color: Colors.grey.shade500,
                     ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 28),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 20),
           ],
         ),
       ),
@@ -1883,62 +2033,732 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
 // ======================= SETTINGS =======================
 
+// v2.2.0: layar Settings disamakan dengan foto referensi:
+// - Judul "App", section "Interface" & "VpnService Options"
+// - Dark Mode: dropdown popup (opsi terpilih berlatar ungu)
+// - Root Tethering: nonaktif (butuh root)
+// - Access Control Mode: dropdown popup (Allow all / Allow selected / Deny selected)
+// - Access Control Packages: halaman daftar aplikasi
 class SettingsScreen extends StatefulWidget {
   final ThemeMode currentMode;
   final Function(ThemeMode) onThemeChanged;
-  const SettingsScreen({super.key, required this.currentMode, required this.onThemeChanged});
+  final int accessMode; // 0=Allow all, 1=Allow selected, 2=Deny selected
+  final List<String> accessPackages;
+  final void Function(int mode, List<String> packages) onAccessChanged;
+  const SettingsScreen({
+    super.key,
+    required this.currentMode,
+    required this.onThemeChanged,
+    required this.accessMode,
+    required this.accessPackages,
+    required this.onAccessChanged,
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late ThemeMode _mode;
+  late ThemeMode _mode = widget.currentMode;
+  late int _accessMode = widget.accessMode;
+  late List<String> _packages = List<String>.from(widget.accessPackages);
 
-  @override
-  void initState() {
-    super.initState();
-    _mode = widget.currentMode;
-  }
+  final GlobalKey _themeKey = GlobalKey();
+  final GlobalKey _accessKey = GlobalKey();
 
-  // FIX: pilihan tema kini disimpan permanen via onThemeChanged → prefs
-  void _pick(ThemeMode mode) {
+  static const Map<ThemeMode, String> _themeLabels = {
+    ThemeMode.system: 'Follow System (Android 10+)',
+    ThemeMode.light: 'Always Light',
+    ThemeMode.dark: 'Always Dark',
+  };
+  static const List<String> _accessLabels = [
+    'Allow all apps',
+    'Allow selected apps',
+    'Deny selected apps',
+  ];
+
+  // Posisi teks pada baris (ikon 32 + padding kiri 16 + jarak 16).
+  static const double _textLeft = 64;
+
+  void _pickTheme(ThemeMode mode) {
     setState(() => _mode = mode);
     widget.onThemeChanged(mode);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Tema disimpan')),
+  }
+
+  void _pickAccessMode(int mode) {
+    setState(() => _accessMode = mode);
+    widget.onAccessChanged(mode, _packages);
+  }
+
+  Future<void> _openPackages() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AccessControlScreen(
+          selected: List<String>.from(_packages),
+          onChanged: (pkgs) {
+            if (!mounted) return;
+            setState(() => _packages = List<String>.from(pkgs));
+            widget.onAccessChanged(_accessMode, _packages);
+          },
+        ),
+      ),
     );
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // Dropdown popup seperti foto: muncul tepat di bawah baris, sejajar
+  // dengan teks, opsi terpilih berlatar ungu + teks putih.
+  Future<void> _showDropdown({
+    required GlobalKey anchor,
+    required List<String> labels,
+    required int selectedIndex,
+    required void Function(int) onPick,
+  }) async {
+    final box = anchor.currentContext?.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+
+    final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
+    final left = origin.dx + _textLeft;
+    final top = origin.dy + box.size.height - 6;
+    final position = RelativeRect.fromLTRB(
+      left,
+      top,
+      overlay.size.width - left,
+      overlay.size.height - top,
+    );
+
+    const style = TextStyle(fontSize: 14.5);
+    double textW = 0;
+    for (final l in labels) {
+      final tp = TextPainter(
+        text: TextSpan(text: l, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      if (tp.width > textW) textW = tp.width;
+    }
+    // Menu popup selalu dibulatkan ke kelipatan 56dp → samakan lebar item
+    // agar latar ungu terpilih memenuhi lebar menu (tanpa celah putih).
+    double w = ((textW + 40) / 56).ceil() * 56.0;
+    if (w < 168) w = 168;
+    if (w > 280) w = 280;
+
+    final result = await showMenu<int>(
+      context: context,
+      position: position,
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      items: [
+        for (int i = 0; i < labels.length; i++)
+          PopupMenuItem<int>(
+            value: i,
+            height: 48,
+            padding: EdgeInsets.zero,
+            child: Container(
+              width: w,
+              height: 48,
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              color: i == selectedIndex ? Colors.purple.shade700 : null,
+              child: Text(
+                labels[i],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: style.copyWith(
+                  color: i == selectedIndex ? Colors.white : null,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+    if (result != null && mounted) onPick(result);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(
+        title: const Text('App', style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
       body: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 6),
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text('Tema Aplikasi', style: TextStyle(fontWeight: FontWeight.bold)),
+          _section(context, 'Interface'),
+          _row(
+            context,
+            key: _themeKey,
+            icon: Icons.brightness_medium,
+            title: 'Dark Mode',
+            subtitle: _themeLabels[_mode],
+            onTap: () => _showDropdown(
+              anchor: _themeKey,
+              labels: _themeLabels.values.toList(),
+              selectedIndex: ThemeMode.values.indexOf(_mode),
+              onPick: (i) => _pickTheme(ThemeMode.values[i]),
+            ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text('Pilihan tersimpan permanen.', style: TextStyle(fontSize: 12)),
+          _section(context, 'VpnService Options'),
+          _row(
+            context,
+            title: 'Root Tethering',
+            disabled: true,
+            trailing: const Switch(value: false, onChanged: null),
+            onTap: () => _snack('Root Tethering butuh akses root — tidak tersedia.'),
           ),
-          _tile(Icons.brightness_auto, 'Ikuti Sistem', ThemeMode.system),
-          _tile(Icons.light_mode, 'Terang', ThemeMode.light),
-          _tile(Icons.dark_mode, 'Gelap', ThemeMode.dark),
+          _row(
+            context,
+            key: _accessKey,
+            title: 'Access Control Mode',
+            subtitle: _accessLabels[_accessMode],
+            onTap: () => _showDropdown(
+              anchor: _accessKey,
+              labels: _accessLabels,
+              selectedIndex: _accessMode,
+              onPick: _pickAccessMode,
+            ),
+          ),
+          _row(
+            context,
+            title: 'Access Control Packages',
+            subtitle: _packages.isEmpty
+                ? 'Configure access permission for apps'
+                : 'Configure access permission for apps (${_packages.length})',
+            onTap: _openPackages,
+          ),
         ],
       ),
     );
   }
 
-  Widget _tile(IconData icon, String title, ThemeMode mode) {
-    final active = _mode == mode;
-    return ListTile(
-      leading: Icon(icon, color: active ? Colors.purple : null),
-      title: Text(title, style: TextStyle(fontWeight: active ? FontWeight.bold : FontWeight.normal)),
-      trailing: active ? const Icon(Icons.check_circle, color: Colors.purple) : null,
-      onTap: () => _pick(mode),
+  Widget _section(BuildContext context, String title) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: cs.primary,
+        ),
+      ),
+    );
+  }
+
+  // Baris tanpa ikon tetap menyisakan ruang ikon agar teks sejajar (foto).
+  Widget _row(
+    BuildContext context, {
+    Key? key,
+    IconData? icon,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    bool disabled = false,
+    VoidCallback? onTap,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final titleColor = disabled ? cs.onSurface.withOpacity(0.38) : cs.onSurface;
+    return InkWell(
+      key: key,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 32,
+              child: icon == null
+                  ? null
+                  : Icon(icon, size: 24, color: cs.onSurface),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w500,
+                      color: titleColor,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12.5, color: cs.onSurface),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (trailing != null) trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ======================= ACCESS CONTROL PACKAGES =======================
+
+// v2.2.0 — halaman pemilihan aplikasi (sesuai foto referensi):
+// AppBar berisi ikon Search + menu titik tiga. Menu: Select All / Select
+// None / Select Invert, lalu submenu Filter (System Apps), Sort (Name /
+// Package Name / Install Time / Update Time + Reverse) dan External
+// (Import / Export Clipboard). Daftar menampilkan ikon aplikasi, nama,
+// package, dan kotak centang. Setiap perubahan langsung tersimpan.
+class AccessControlScreen extends StatefulWidget {
+  final List<String> selected;
+  final void Function(List<String> packages) onChanged;
+  const AccessControlScreen({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  State<AccessControlScreen> createState() => _AccessControlScreenState();
+}
+
+class _AccessControlScreenState extends State<AccessControlScreen> {
+  static const List<String> _sortLabels = [
+    'Name',
+    'Package Name',
+    'Install Time',
+    'Update Time',
+  ];
+
+  List<VpnAppInfo> _apps = [];
+  bool _loading = true;
+  final Set<String> _selected = {};
+  final TextEditingController _searchCtrl = TextEditingController();
+  bool _searching = false;
+  String _query = '';
+  bool _showSystem = true;
+  int _sortBy = 0; // 0=Name, 1=Package Name, 2=Install Time, 3=Update Time
+  bool _reverse = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected.addAll(widget.selected);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final apps = await AppInventory.load(withIcons: true);
+    if (!mounted) return;
+    setState(() {
+      _apps = apps;
+      _loading = false;
+    });
+  }
+
+  void _commit() => widget.onChanged(_selected.toList());
+
+  void _toggle(String pkg) {
+    setState(() {
+      if (_selected.contains(pkg)) {
+        _selected.remove(pkg);
+      } else {
+        _selected.add(pkg);
+      }
+    });
+    _commit();
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  void _openSearch() => setState(() => _searching = true);
+
+  void _closeSearch() {
+    _searchCtrl.clear();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  int _compare(VpnAppInfo a, VpnAppInfo b) {
+    int r;
+    switch (_sortBy) {
+      case 1:
+        r = a.packageName.toLowerCase().compareTo(b.packageName.toLowerCase());
+        break;
+      case 2:
+        r = a.installTime.compareTo(b.installTime);
+        break;
+      case 3:
+        r = a.updateTime.compareTo(b.updateTime);
+        break;
+      default:
+        r = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    }
+    return _reverse ? -r : r;
+  }
+
+  List<VpnAppInfo> get _filtered {
+    final q = _query.trim().toLowerCase();
+    final list = _apps.where((a) {
+      if (!_showSystem && a.systemApp) return false;
+      if (q.isEmpty) return true;
+      return a.name.toLowerCase().contains(q) ||
+          a.packageName.toLowerCase().contains(q);
+    }).toList();
+    list.sort(_compare);
+    return list;
+  }
+
+  // ---------------- Menu titik tiga (utama + submenu) ----------------
+
+  Future<void> _openMenu([String page = 'main']) async {
+    final mq = MediaQuery.of(context);
+    final position = RelativeRect.fromLTRB(
+      mq.size.width,
+      mq.padding.top + kToolbarHeight,
+      0,
+      0,
+    );
+
+    final List<PopupMenuEntry<String>> items;
+    switch (page) {
+      case 'filter':
+        items = [
+          _mi('menu', 'Filter', bold: true),
+          _mi('toggle:system', 'System Apps',
+              trailing: _checkIcon(_showSystem)),
+        ];
+        break;
+      case 'sort':
+        items = [
+          _mi('menu', 'Sort', bold: true),
+          for (int i = 0; i < _sortLabels.length; i++)
+            _mi('sort:$i', _sortLabels[i], trailing: _radioIcon(_sortBy == i)),
+          _mi('reverse', 'Reverse', trailing: _checkIcon(_reverse)),
+        ];
+        break;
+      case 'external':
+        items = [
+          _mi('menu', 'External', bold: true),
+          _mi('import', 'Import from Clipboard'),
+          _mi('export', 'Export to Clipboard'),
+        ];
+        break;
+      default:
+        items = [
+          _mi('all', 'Select All'),
+          _mi('none', 'Select None'),
+          _mi('invert', 'Select Invert'),
+          _mi('page:filter', 'Filter', trailing: _arrow()),
+          _mi('page:sort', 'Sort', trailing: _arrow()),
+          _mi('page:external', 'External', trailing: _arrow()),
+        ];
+    }
+
+    final v = await showMenu<String>(
+      context: context,
+      position: position,
+      elevation: 6,
+      constraints: const BoxConstraints(minWidth: 224, maxWidth: 280),
+      items: items,
+    );
+    if (v == null || !mounted) return;
+    _onMenu(v);
+  }
+
+  void _onMenu(String value) {
+    if (value == 'menu') {
+      _openMenu('main');
+    } else if (value.startsWith('page:')) {
+      _openMenu(value.substring(5));
+    } else if (value == 'all') {
+      setState(() {
+        for (final a in _filtered) {
+          _selected.add(a.packageName);
+        }
+      });
+      _commit();
+    } else if (value == 'none') {
+      setState(_selected.clear);
+      _commit();
+    } else if (value == 'invert') {
+      setState(() {
+        for (final a in _filtered) {
+          if (_selected.contains(a.packageName)) {
+            _selected.remove(a.packageName);
+          } else {
+            _selected.add(a.packageName);
+          }
+        }
+      });
+      _commit();
+    } else if (value == 'toggle:system') {
+      setState(() => _showSystem = !_showSystem);
+    } else if (value == 'reverse') {
+      setState(() => _reverse = !_reverse);
+    } else if (value.startsWith('sort:')) {
+      setState(() => _sortBy = int.tryParse(value.substring(5)) ?? 0);
+    } else if (value == 'import') {
+      _importFromClipboard();
+    } else if (value == 'export') {
+      _exportToClipboard();
+    }
+  }
+
+  // Terima daftar package dari clipboard: JSON array atau per baris.
+  // Hanya package yang benar-benar terpasang yang diterima.
+  Future<void> _importFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = (data?.text ?? '').trim();
+    if (text.isEmpty) {
+      _snack('Clipboard kosong.');
+      return;
+    }
+    List<String> pkgs = [];
+    if (text.startsWith('[')) {
+      try {
+        final v = json.decode(text);
+        if (v is List) {
+          pkgs = v
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+    if (pkgs.isEmpty) {
+      pkgs = text
+          .split(RegExp(r'[\s,;]+'))
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
+    final known = _apps.map((a) => a.packageName).toSet();
+    final valid = pkgs.where(known.contains).toSet();
+    if (valid.isEmpty) {
+      _snack('Tidak ada package yang dikenali di clipboard.');
+      return;
+    }
+    setState(() => _selected.addAll(valid));
+    _commit();
+    _snack('${valid.length} package diimpor dari clipboard.');
+  }
+
+  Future<void> _exportToClipboard() async {
+    if (_selected.isEmpty) {
+      _snack('Belum ada package yang dipilih.');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: _selected.toList().join('\n')));
+    _snack('${_selected.length} package diekspor ke clipboard.');
+  }
+
+  // ---------------- Widget bantu menu ----------------
+
+  PopupMenuItem<String> _mi(
+    String value,
+    String label, {
+    Widget? trailing,
+    bool bold = false,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 48,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _arrow() => Icon(Icons.arrow_right, size: 24, color: Colors.grey.shade600);
+
+  Widget _checkIcon(bool on) {
+    final cs = Theme.of(context).colorScheme;
+    return Icon(
+      on ? Icons.check_box : Icons.check_box_outline_blank,
+      size: 22,
+      color: on ? cs.primary : cs.outline,
+    );
+  }
+
+  Widget _radioIcon(bool on) {
+    final cs = Theme.of(context).colorScheme;
+    return Icon(
+      on ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+      size: 22,
+      color: on ? cs.primary : cs.outline,
+    );
+  }
+
+  Widget _appIcon(VpnAppInfo app) {
+    final bytes = app.icon;
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: bytes != null && bytes.isNotEmpty
+          ? Image.memory(
+              bytes,
+              gaplessPlayback: true,
+              cacheWidth: 96,
+              filterQuality: FilterQuality.low,
+              errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.android, color: Colors.green),
+            )
+          : const Icon(Icons.android, color: Colors.green),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final visible = _filtered;
+    return PopScope(
+      canPop: !_searching,
+      onPopInvoked: (didPop) {
+        if (!didPop && _searching) _closeSearch();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _searching ? _closeSearch : () => Navigator.pop(context),
+          ),
+          title: _searching
+              ? TextField(
+                  controller: _searchCtrl,
+                  autofocus: true,
+                  onChanged: (v) => setState(() => _query = v),
+                  style: const TextStyle(fontSize: 16),
+                  decoration: const InputDecoration(
+                    hintText: 'Search...',
+                    border: InputBorder.none,
+                  ),
+                )
+              : const Text(
+                  'Access Control Packages',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+          actions: [
+            if (_searching)
+              IconButton(
+                tooltip: 'Clear',
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  if (_searchCtrl.text.isEmpty) {
+                    _closeSearch();
+                  } else {
+                    _searchCtrl.clear();
+                    setState(() => _query = '');
+                  }
+                },
+              )
+            else
+              IconButton(
+                tooltip: 'Search',
+                icon: const Icon(Icons.search),
+                onPressed: _openSearch,
+              ),
+            IconButton(
+              tooltip: 'Menu',
+              icon: const Icon(Icons.more_vert),
+              onPressed: _openMenu,
+            ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : (visible.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _apps.isEmpty
+                                ? 'Tidak bisa memuat daftar aplikasi.\n'
+                                    'Cek AndroidManifest (QUERY_ALL_PACKAGES).'
+                                : 'Tidak ada aplikasi yang cocok.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12, color: cs.outline),
+                          ),
+                          if (_apps.isEmpty) ...[
+                            const SizedBox(height: 12),
+                            TextButton(
+                              onPressed: _load,
+                              child: const Text('Coba lagi'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: visible.length,
+                    itemBuilder: (ctx, i) {
+                      final app = visible[i];
+                      final checked = _selected.contains(app.packageName);
+                      return ListTile(
+                        visualDensity: const VisualDensity(vertical: -1),
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 16),
+                        onTap: () => _toggle(app.packageName),
+                        leading: _appIcon(app),
+                        title: Text(
+                          app.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 15.5),
+                        ),
+                        subtitle: Text(
+                          app.packageName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                        trailing: Checkbox(
+                          value: checked,
+                          onChanged: (_) => _toggle(app.packageName),
+                        ),
+                      );
+                    },
+                  )),
+      ),
     );
   }
 }
