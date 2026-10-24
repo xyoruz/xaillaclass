@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
@@ -9,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_apps/device_apps.dart';
 
 // =====================================================================
-//  XAILLA CLASS — VPN Client · v2.2.0
+//  XAILLA CLASS — VPN Client · v2.3.1 (STABILITY PATCH)
 //  Bug & fungsi diperbaiki, desain asli dipertahankan:
 //   1. Layar Proxy kini LIVE — status/ping/banner update real-time
 //      (dulu: nilai beku karena lewat route terpisah)
@@ -55,16 +56,65 @@ import 'package:device_apps/device_apps.dart';
 //  19. FIX COMPILE: properti device_apps yang benar adalah
 //      installTimeMillis / updateTimeMillis (dulu installTime/updateTime).
 //      Hasil gagal-muat daftar aplikasi tidak lagi di-cache.
+//  20. DUKUNGAN ARSITEKTUR: build kini mencakup 32-bit (armeabi-v7a)
+//      DAN 64-bit (arm64-v8a) + x86_64 untuk emulator. Terverifikasi
+//      langsung di paket flutter_v2ray 1.0.10: native library
+//      (libtun2socks.so + libv2ray.aar berisi libgojni.so) TERSEDIA
+//      untuk keempat ABI — jadi tidak ada pengorbanan apa pun.
+//      Kuncinya di android/app/build.gradle (lihat CATATAN BUILD
+//      butir 3) dan perintah build (butir 4-5).
+//  21. PATCH STABILITAS: aplikasi jauh lebih tahan banting —
+//      (a) error async tak terduga dari plugin tidak lagi mematikan
+//      aplikasi (global error guard di main()); (b) init inti VPN
+//      yang gagal tidak lagi menggagalkan pemuatan config & izin;
+//      (c) callback status VPN dibungkus try/catch — payload aneh
+//      dari plugin diabaikan; (d) semua tulis SharedPreferences
+//      dibungkus try/catch (disk penuh tidak bikin crash); (e) ganti
+//      akun/menyambung memvalidasi ulang daftar & mounted setelah
+//      await (race saat daftar berubah di tengah proses); (f) ping
+//      test pakai snapshot daftar dan isRefreshingPing dijamin selalu
+//      reset (FAB tidak bisa mati permanen); (g) posisi dropdown
+//      Settings dijepit dalam batas layar; (h) import/export
+//      clipboard aman; (i) sortir Load Balance tanpa jank.
 //
 //  CATATAN BUILD (WAJIB untuk fitur Access Control):
 //   1) flutter pub add device_apps
 //   2) Tambahkan di android/app/src/main/AndroidManifest.xml:
 //      <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+//   3) ARSITEKTUR — di android/app/build.gradle, di dalam defaultConfig,
+//      pastikan tidak ada abiFilters yang hanya menyebut 64-bit. Agar
+//      eksplisit, sebutkan:
+//          ndk {
+//              abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'
+//          }
+//      armeabi-v7a = HP 32-bit lama · arm64-v8a = HP modern 64-bit ·
+//      x86_64 = emulator PC. minSdk 21 (Android 5.0+) sudah diatur
+//      plugin flutter_v2ray.
+//   4) APK SERBA BISA — 1 file terpasang di SEMUA HP (32/64-bit):
+//          flutter build apk --release
+//   5) APK TERPISAH PER ARSITEKTUR — ukuran lebih kecil:
+//          flutter build apk --release --split-per-abi
+//      → app-armeabi-v7a-release.apk : HP 32-bit lama (dan tetap
+//        terpasang di HP 64-bit berkat backward compatibility)
+//      → app-arm64-v8a-release.apk   : HP modern 64-bit (optimal)
+//      → app-x86_64-release.apk      : emulator di PC
+//      Catatan: APK arm64-v8a TIDAK bisa terpasang di HP 32-bit —
+//      kebalikannya tidak berlaku (lihat referensi screenshot).
 // =====================================================================
 
-const String appVersion = 'v2.2.0';
+const String appVersion = 'v2.3.1';
 
 void main() {
+  // PATCH STABILITAS: error tak tertangkap (mis. dari callback plugin
+  // atau Future tanpa catch) TIDAK LAGI MEMATIKAN aplikasi. Dulu satu
+  // error async kecil = layar mati langsung; kini hanya dicatat di log.
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (Object e, StackTrace st) {
+    debugPrint('Error tak tertangkap (diabaikan): $e');
+    return true; // dianggap tertangani — aplikasi tetap hidup
+  };
   runApp(const XaillaApp());
 }
 
@@ -478,7 +528,15 @@ class _XaillaAppState extends State<XaillaApp> {
 
   void _changeTheme(ThemeMode mode) {
     setState(() => _themeMode = mode);
-    SharedPreferences.getInstance().then((p) => p.setInt('theme_mode', mode.index));
+    _persistTheme(mode);
+  }
+
+  // PATCH STABILITAS: tulis preferensi dibungkus try/catch.
+  Future<void> _persistTheme(ThemeMode mode) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setInt('theme_mode', mode.index);
+    } catch (_) {}
   }
 
   @override
@@ -655,18 +713,23 @@ class _MainNavigatorState extends State<MainNavigator> {
   // mengenali CONNECTING (dulu diabaikan → tombol bisa dobel-connect).
   void _onStatus(dynamic status) {
     if (!mounted) return;
-    final s = status.state.toString().toUpperCase();
-    final connecting = s.contains('CONNECTING');
-    final connected =
-        s.contains('CONNECTED') && !connecting && !s.contains('DISCONNECTED');
-    setState(() {
-      isConnecting = connecting;
-      isConnected = connected;
-      duration = _fmtDuration(status.duration?.toString());
-      downSpeed = _parseSpeed(status.downloadSpeed?.toString());
-      upSpeed = _parseSpeed(status.uploadSpeed?.toString());
-      // FIX: ping tidak lagi dihapus saat VPN terputus — data tetap berguna.
-    });
+    // PATCH STABILITAS: payload status dari plugin kadang tak terduga
+    // (null / format beda saat service dibunuh sistem). Dulu throw di
+    // callback event = error tak tertangkap; kini aman diabaikan.
+    try {
+      final s = status.state.toString().toUpperCase();
+      final connecting = s.contains('CONNECTING');
+      final connected =
+          s.contains('CONNECTED') && !connecting && !s.contains('DISCONNECTED');
+      setState(() {
+        isConnecting = connecting;
+        isConnected = connected;
+        duration = _fmtDuration(status.duration?.toString());
+        downSpeed = _parseSpeed(status.downloadSpeed?.toString());
+        upSpeed = _parseSpeed(status.uploadSpeed?.toString());
+        // FIX: ping tidak lagi dihapus saat VPN terputus — data tetap berguna.
+      });
+    } catch (_) {}
   }
 
   // FIX: dulu int.tryParse → selalu 0 kalau package mengirim angka terformat.
@@ -699,21 +762,32 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 
   Future<void> _init() async {
-    await _v2ray.initializeV2Ray();
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      savedConfigs = prefs.getStringList('vpn_configs') ?? [];
-      selectedIndex = prefs.getInt('selected_index') ?? 0;
-      if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
-      accessMode = prefs.getInt('access_mode') ?? 0;
-      if (accessMode < 0 || accessMode > 2) accessMode = 0;
-      accessPackages = prefs.getStringList('access_packages') ?? [];
-    });
+    // PATCH STABILITAS: kegagalan init inti VPN (HP tertentu / plugin)
+    // tidak boleh menggagalkan pemuatan config & izin notifikasi.
+    // Dulu: satu throw di sini = daftar config kosong selamanya.
+    try {
+      await _v2ray.initializeV2Ray();
+    } catch (e) {
+      debugPrint('Init inti VPN gagal (dilewati): $e');
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        savedConfigs = prefs.getStringList('vpn_configs') ?? [];
+        selectedIndex = prefs.getInt('selected_index') ?? 0;
+        if (selectedIndex >= savedConfigs.length) selectedIndex = 0;
+        accessMode = prefs.getInt('access_mode') ?? 0;
+        if (accessMode < 0 || accessMode > 2) accessMode = 0;
+        accessPackages = prefs.getStringList('access_packages') ?? [];
+      });
 
-    if (!(prefs.getBool('perm_asked') ?? false)) {
-      await Permission.notification.request();
-      await prefs.setBool('perm_asked', true);
+      if (!(prefs.getBool('perm_asked') ?? false)) {
+        await Permission.notification.request();
+        await prefs.setBool('perm_asked', true);
+      }
+    } catch (e) {
+      debugPrint('Gagal memuat preferensi awal: $e');
     }
   }
 
@@ -725,11 +799,17 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 
   Future<void> _savePrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('vpn_configs', savedConfigs);
-    await prefs.setInt('selected_index', selectedIndex);
-    await prefs.setInt('access_mode', accessMode);
-    await prefs.setStringList('access_packages', accessPackages);
+    // PATCH STABILITAS: kegagalan tulis disk (penuh / IO error) tidak
+    // lagi menjadi exception tak tertangkap.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('vpn_configs', savedConfigs);
+      await prefs.setInt('selected_index', selectedIndex);
+      await prefs.setInt('access_mode', accessMode);
+      await prefs.setStringList('access_packages', accessPackages);
+    } catch (e) {
+      debugPrint('Gagal menyimpan preferensi: $e');
+    }
   }
 
   // Access Control → daftar blockedApps untuk plugin flutter_v2ray.
@@ -863,8 +943,12 @@ class _MainNavigatorState extends State<MainNavigator> {
             i++) {
           await Future.delayed(const Duration(milliseconds: 100));
         }
+        // PATCH STABILITAS: validasi ulang SETELAH await — daftar bisa
+        // berubah selama menunggu (mis. akun dihapus dari layar lain).
+        if (!mounted || index >= savedConfigs.length) return;
         final p = ConfigParser.prepare(savedConfigs[index]);
         final blocked = await _computeBlockedApps();
+        if (!mounted) return;
         if (await _v2ray.requestPermission()) {
           _v2ray.startV2Ray(
             remark: p.remark,
@@ -924,6 +1008,7 @@ class _MainNavigatorState extends State<MainNavigator> {
       }
       final p = ConfigParser.prepare(savedConfigs[idx]);
       final blocked = await _computeBlockedApps();
+      if (!mounted) return; // PATCH STABILITAS: guard setelah await
       if (await _v2ray.requestPermission()) {
         _v2ray.startV2Ray(
           remark: p.remark,
@@ -950,30 +1035,40 @@ class _MainNavigatorState extends State<MainNavigator> {
       _snack('Belum ada profil untuk di-ping.');
       return;
     }
+    // PATCH STABILITAS: iterasi memakai SNAPSHOT daftar — daftar asli
+    // bisa berubah (hapus/simpan editor) di tengah pengukuran sehingga
+    // index tidak melenceng.
+    final snapshot = List<String>.from(savedConfigs);
     setState(() {
       isRefreshingPing = true;
       pings = {};
     });
 
     int ok = 0;
-    for (int i = 0; i < savedConfigs.length; i++) {
-      try {
-        final p = ConfigParser.prepare(savedConfigs[i]);
-        final d = await _v2ray.getServerDelay(config: p.config).timeout(const Duration(seconds: 8));
+    try {
+      for (int i = 0; i < snapshot.length; i++) {
         if (!mounted) return;
-        if (d >= 0) {
-          ok++;
-          setState(() => pings[i] = d);
-        } else {
+        try {
+          final p = ConfigParser.prepare(snapshot[i]);
+          final d = await _v2ray
+              .getServerDelay(config: p.config)
+              .timeout(const Duration(seconds: 8));
+          if (!mounted) return;
+          if (d >= 0) ok++;
+          setState(() => pings[i] = (d >= 0) ? d : -1);
+        } catch (_) {
+          if (!mounted) return;
           setState(() => pings[i] = -1);
         }
-      } catch (_) {
-        if (!mounted) return;
-        setState(() => pings[i] = -1);
+      }
+    } finally {
+      // PATCH STABILITAS: isRefreshingPing DIJAMIN reset — dulu bisa
+      // stuck true bila error di luar dugaan → FAB ping mati selamanya.
+      if (mounted) {
+        setState(() => isRefreshingPing = false);
       }
     }
     if (!mounted) return;
-    setState(() => isRefreshingPing = false);
     if (ok == 0) _snack('Semua server gagal di-ping. Cek koneksi internet.');
   }
 
@@ -1683,6 +1778,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
+              if (!mounted) return; // PATCH STABILITAS
               // sinkronkan buffer editor agar tidak "hidup lagi" saat disimpan
               if (index < _controllers.length) {
                 final removed = _controllers.removeAt(index);
@@ -1723,10 +1819,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
     } else if (_activeTab == 3) {
       // Load Balance: urut nama A-Z
+      // PATCH STABILITAS/PERF: nama dihitung SEKALI di awal — dulu
+      // describe() (parsing link) dipanggil 2x per perbandingan sehingga
+      // daftar panjang bikin jank/frame lewat.
+      final names = <int, String>{
+        for (final e in list)
+          e.key: ConfigParser.describe(e.value).name.toLowerCase(),
+      };
       list.sort((a, b) {
-        final nameA = ConfigParser.describe(a.value).name.toLowerCase();
-        final nameB = ConfigParser.describe(b.value).name.toLowerCase();
-        final r = nameA.compareTo(nameB);
+        final r = names[a.key]!.compareTo(names[b.key]!);
         return r != 0 ? r : a.key.compareTo(b.key);
       });
     }
@@ -2107,6 +2208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _snack(String msg) {
+    if (!mounted) return; // PATCH STABILITAS
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(msg)));
@@ -2126,8 +2228,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (box == null || overlay == null) return;
 
     final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
-    final left = origin.dx + _textLeft;
-    final top = origin.dy + box.size.height - 6;
+    double left = origin.dx + _textLeft;
+    double top = origin.dy + box.size.height - 6;
+    // PATCH STABILITAS: posisi dijepit ke dalam overlay — nilai negatif
+    // / melebihi layar bisa memicu assertion "outside of overlay".
+    if (left < 0) left = 0;
+    if (left > overlay.size.width) left = overlay.size.width;
+    if (top < 0) top = 0;
+    if (top > overlay.size.height) top = overlay.size.height;
     final position = RelativeRect.fromLTRB(
       left,
       top,
@@ -2531,8 +2639,16 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
   // Terima daftar package dari clipboard: JSON array atau per baris.
   // Hanya package yang benar-benar terpasang yang diterima.
   Future<void> _importFromClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = (data?.text ?? '').trim();
+    // PATCH STABILITAS: baca clipboard dibungkus try/catch (beberapa
+    // ROM membatasi akses clipboard), plus guard mounted setelah await.
+    String text = '';
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      text = (data?.text ?? '').trim();
+    } catch (_) {
+      _snack('Gagal membaca clipboard.');
+      return;
+    }
     if (text.isEmpty) {
       _snack('Clipboard kosong.');
       return;
@@ -2561,6 +2677,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
       _snack('Tidak ada package yang dikenali di clipboard.');
       return;
     }
+    if (!mounted) return; // PATCH STABILITAS: guard setelah await
     setState(() => _selected.addAll(valid));
     _commit();
     _snack('${valid.length} package diimpor dari clipboard.');
@@ -2571,8 +2688,14 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
       _snack('Belum ada package yang dipilih.');
       return;
     }
-    await Clipboard.setData(ClipboardData(text: _selected.toList().join('\n')));
-    _snack('${_selected.length} package diekspor ke clipboard.');
+    // PATCH STABILITAS: tulis clipboard juga bisa gagal (ROM terbatas).
+    try {
+      await Clipboard.setData(
+          ClipboardData(text: _selected.toList().join('\n')));
+      _snack('${_selected.length} package diekspor ke clipboard.');
+    } catch (_) {
+      _snack('Gagal menyalin ke clipboard.');
+    }
   }
 
   // ---------------- Widget bantu menu ----------------
